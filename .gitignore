@@ -1,0 +1,24 @@
+# Rust build artifacts (architecture-specific; rebuild on the Raspberry Pi)
+**/target/
+
+# Rustfmt backup files
+**/*.rs.bk
+
+# Debug symbols sometimes generated on Windows
+*.pdb
+
+# Local environment and secret files
+.env
+.env.*
+!.env.example
+
+# Editor and operating-system files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Keep dependency versions reproducible on the Raspberry Pi.
+!**/Cargo.lock
