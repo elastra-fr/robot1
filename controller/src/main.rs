@@ -1,10 +1,14 @@
 use std::io::{Read, Write};
+use std::thread;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut port = serialport::new("/dev/ttyACM0", 115_200)
         .timeout(Duration::from_secs(2))
         .open()?;
+
+    // Le Mega redémarre à l'ouverture du port série
+    thread::sleep(Duration::from_secs(2));
 
     port.write_all(b"PING\n")?;
 
