@@ -215,6 +215,7 @@ Available configuration:
 | --- | --- | --- |
 | `ARDUINO_FQBN` | `arduino:avr:mega` | Arduino board identifier |
 | `ARDUINO_PORT` | `/dev/ttyACM0` | Arduino serial port |
+| `ARDUINO_BOOT_DELAY_MS` | `2000` | Silent delay after opening the port, before the handshake |
 | `FIRMWARE_DIR` | `firmware/mega` | Firmware sketch directory |
 | `CONTROLLER_DIR` | `controller` | Rust controller directory |
 | `BUILD_PROFILE` | `release` | Cargo build profile |

@@ -35,6 +35,10 @@ Pi      -> HELLO(session, sequence)
 Arduino -> HELLO_ACK(session, same sequence)
 ```
 
+Opening the serial port resets classic Uno and Mega boards. The controller waits
+for a configurable startup grace period before clearing stale input and sending
+the first `HELLO` frame.
+
 The controller retries `HELLO` when the Arduino is still rebooting. Frames from
 older sessions are ignored. A new valid `HELLO` safely stops the current motion
 before activating the new session.

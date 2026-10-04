@@ -7,6 +7,7 @@ use std::io::{self, Read, Write};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const SERIAL_TIMEOUT: Duration = Duration::from_millis(50);
+const DEFAULT_BOOT_DELAY: Duration = Duration::from_millis(2_000);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(500);
 const HANDSHAKE_ATTEMPTS: usize = 10;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(250);
@@ -20,10 +21,16 @@ struct SerialLink {
 }
 
 impl SerialLink {
-    fn open(port_name: &str, session: u32) -> io::Result<Self> {
+    fn open(port_name: &str, session: u32, boot_delay: Duration) -> io::Result<Self> {
         let port = serialport::new(port_name, 115_200)
             .timeout(SERIAL_TIMEOUT)
             .open()?;
+
+        println!(
+            "Waiting {}ms for the Arduino bootloader and firmware...",
+            boot_delay.as_millis()
+        );
+        std::thread::sleep(boot_delay);
         port.clear(ClearBuffer::Input)?;
 
         Ok(Self {
@@ -136,6 +143,21 @@ fn new_session() -> u32 {
     session.max(1)
 }
 
+fn boot_delay() -> io::Result<Duration> {
+    let Some(value) = std::env::var_os("ARDUINO_BOOT_DELAY_MS") else {
+        return Ok(DEFAULT_BOOT_DELAY);
+    };
+    let value = value.to_string_lossy();
+    let milliseconds = value.parse::<u64>().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid ARDUINO_BOOT_DELAY_MS value: {value}"),
+        )
+    })?;
+
+    Ok(Duration::from_millis(milliseconds))
+}
+
 fn handshake(link: &mut SerialLink) -> io::Result<()> {
     println!("Synchronizing protocol session {:08x}...", link.session);
 
@@ -243,7 +265,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let session = new_session();
 
     println!("Opening Arduino serial port: {port_name}");
-    let mut link = SerialLink::open(&port_name, session)?;
+    let mut link = SerialLink::open(&port_name, session, boot_delay()?)?;
     handshake(&mut link)?;
 
     println!("Protocol synchronized. Starting simulation loop (Ctrl+C to stop).");
