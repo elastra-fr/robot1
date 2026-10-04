@@ -132,8 +132,8 @@ Deploy the current checkout:
 
 During development, when no systemd service is configured, the script runs the
 controller in the foreground after uploading the firmware. This displays the
-Arduino handshake directly and makes the deployment fail if communication does
-not work.
+Arduino handshake and the continuous development loop directly. The command
+keeps running until `Ctrl+C` and fails if communication does not work.
 
 Pull fast-forward changes before deploying:
 

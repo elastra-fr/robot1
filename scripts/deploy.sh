@@ -51,11 +51,11 @@ arduino-cli upload \
 if [[ -n "${SERVICE_NAME}" ]]; then
     printf '[5/5] Restarting systemd service: %s...\n' "${SERVICE_NAME}"
     systemctl restart "${SERVICE_NAME}"
+    printf 'Deployment completed successfully.\n'
 else
-    printf '[5/5] Running controller in the foreground...\n'
-    ARDUINO_PORT="${ARDUINO_PORT}" cargo run \
+    printf '[5/5] Starting controller in the foreground (Ctrl+C to stop)...\n'
+    export ARDUINO_PORT
+    exec cargo run \
         --manifest-path "${CONTROLLER_PATH}/Cargo.toml" \
         --profile "${BUILD_PROFILE}"
 fi
-
-printf 'Deployment completed successfully.\n'

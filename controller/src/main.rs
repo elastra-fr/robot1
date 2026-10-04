@@ -74,13 +74,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     wait_for(&mut reader, "READY")?;
 
     send_command(&mut reader, &mut writer, "PING", "PONG")?;
-    send_command(&mut reader, &mut writer, "LED ON", "OK")?;
 
-    std::thread::sleep(Duration::from_secs(1));
+    println!("Handshake complete. Starting development loop (Ctrl+C to stop).");
+    let mut led_on = false;
 
-    send_command(&mut reader, &mut writer, "LED OFF", "OK")?;
+    loop {
+        led_on = !led_on;
+        let command = if led_on { "LED ON" } else { "LED OFF" };
 
-    Ok(())
+        send_command(&mut reader, &mut writer, command, "OK")?;
+        std::thread::sleep(Duration::from_secs(1));
+    }
 }
 
 #[cfg(test)]
