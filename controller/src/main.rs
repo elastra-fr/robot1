@@ -11,6 +11,7 @@ const DEFAULT_BOOT_DELAY: Duration = Duration::from_millis(2_000);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(500);
 const HANDSHAKE_ATTEMPTS: usize = 10;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(250);
+const TELEMETRY_LOG_INTERVAL: Duration = Duration::from_secs(1);
 
 struct SerialLink {
     port: Box<dyn SerialPort>,
@@ -202,22 +203,26 @@ fn send_motion(link: &mut SerialLink, phase: MotionPhase) -> io::Result<()> {
     Ok(())
 }
 
-fn display_frame(frame: Frame) {
+fn display_frame(frame: Frame, telemetry_log: &mut TelemetryLog) {
     match frame.message_type {
         message_type::ACK => println!("Arduino -> ACK seq={}", frame.sequence),
         message_type::TELEMETRY => match Telemetry::decode(&frame.payload) {
-            Some(telemetry) => println!(
-                "Telemetry t={}ms state={} target=({},{})mm/s position=({},{})mm distance={}mm battery={}mV last_cmd={}",
-                telemetry.uptime_ms,
-                telemetry.state,
-                telemetry.left_target_mm_s,
-                telemetry.right_target_mm_s,
-                telemetry.left_position_mm,
-                telemetry.right_position_mm,
-                telemetry.distance_mm,
-                telemetry.battery_mv,
-                telemetry.last_command_sequence
-            ),
+            Some(telemetry) if telemetry_log.should_display(&telemetry, Instant::now()) => {
+                println!(
+                    "Telemetry t={}ms state={}({}) target=({},{})mm/s position=({},{})mm distance={}mm battery={}mV last_cmd={}",
+                    telemetry.uptime_ms,
+                    telemetry.state,
+                    telemetry.state_name(),
+                    telemetry.left_target_mm_s,
+                    telemetry.right_target_mm_s,
+                    telemetry.left_position_mm,
+                    telemetry.right_position_mm,
+                    telemetry.distance_mm,
+                    telemetry.battery_mv,
+                    telemetry.last_command_sequence
+                );
+            }
+            Some(_) => {}
             None => eprintln!("Arduino -> invalid TELEMETRY payload"),
         },
         message_type::ERROR => eprintln!(
@@ -225,6 +230,33 @@ fn display_frame(frame: Frame) {
             frame.sequence, frame.payload
         ),
         other => eprintln!("Arduino -> unexpected message type 0x{other:02x}"),
+    }
+}
+
+#[derive(Default)]
+struct TelemetryLog {
+    last_display: Option<Instant>,
+    last_state: Option<u8>,
+    last_command_sequence: Option<u16>,
+}
+
+impl TelemetryLog {
+    fn should_display(&mut self, telemetry: &Telemetry, now: Instant) -> bool {
+        let changed = self.last_state != Some(telemetry.state)
+            || self.last_command_sequence != Some(telemetry.last_command_sequence);
+        let periodic = self
+            .last_display
+            .is_none_or(|last_display| now.duration_since(last_display) >= TELEMETRY_LOG_INTERVAL);
+
+        self.last_state = Some(telemetry.state);
+        self.last_command_sequence = Some(telemetry.last_command_sequence);
+
+        if changed || periodic {
+            self.last_display = Some(now);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -258,6 +290,15 @@ impl Telemetry {
             last_command_sequence: u16::from_le_bytes(payload[21..23].try_into().ok()?),
         })
     }
+
+    fn state_name(&self) -> &'static str {
+        match self.state {
+            0 => "idle",
+            1 => "moving",
+            2 => "watchdog",
+            _ => "unknown",
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -272,6 +313,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut phase_index = 0;
     let mut phase_deadline = Instant::now() + MOTION_SCRIPT[phase_index].duration;
     let mut heartbeat_deadline = Instant::now();
+    let mut telemetry_log = TelemetryLog::default();
     send_motion(&mut link, MOTION_SCRIPT[phase_index])?;
 
     loop {
@@ -290,14 +332,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if let Some(frame) = link.poll()? {
-            display_frame(frame);
+            display_frame(frame, &mut telemetry_log);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Telemetry;
+    use super::{Telemetry, TelemetryLog};
+    use std::time::{Duration, Instant};
 
     #[test]
     fn decodes_simulated_telemetry() {
@@ -319,5 +362,32 @@ mod tests {
         assert_eq!(telemetry.right_position_mm, -250);
         assert_eq!(telemetry.distance_mm, 420);
         assert_eq!(telemetry.last_command_sequence, 7);
+    }
+
+    #[test]
+    fn limits_periodic_logs_without_hiding_transitions() {
+        let start = Instant::now();
+        let mut log = TelemetryLog::default();
+        let mut telemetry = Telemetry {
+            uptime_ms: 0,
+            state: 1,
+            left_target_mm_s: 200,
+            right_target_mm_s: 200,
+            left_position_mm: 0,
+            right_position_mm: 0,
+            distance_mm: 500,
+            battery_mv: 12_000,
+            last_command_sequence: 1,
+        };
+
+        assert!(log.should_display(&telemetry, start));
+        assert!(!log.should_display(&telemetry, start + Duration::from_millis(100)));
+
+        telemetry.state = 2;
+        assert!(log.should_display(&telemetry, start + Duration::from_millis(200)));
+
+        telemetry.last_command_sequence = 2;
+        assert!(log.should_display(&telemetry, start + Duration::from_millis(300)));
+        assert!(log.should_display(&telemetry, start + Duration::from_millis(1_300)));
     }
 }
