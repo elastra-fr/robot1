@@ -19,7 +19,10 @@ fn wait_for(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let port = serialport::new("/dev/ttyACM0", 115_200)
+    let port_name = std::env::var("ARDUINO_PORT").unwrap_or_else(|_| "/dev/ttyACM0".to_string());
+
+    println!("Opening Arduino serial port: {port_name}");
+    let port = serialport::new(&port_name, 115_200)
         .timeout(Duration::from_secs(5))
         .open()?;
 

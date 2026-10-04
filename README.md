@@ -130,6 +130,11 @@ Deploy the current checkout:
 ./scripts/deploy.sh
 ```
 
+During development, when no systemd service is configured, the script runs the
+controller in the foreground after uploading the firmware. This displays the
+Arduino handshake directly and makes the deployment fail if communication does
+not work.
+
 Pull fast-forward changes before deploying:
 
 ```sh
@@ -155,7 +160,9 @@ Available configuration:
 | `FIRMWARE_DIR` | `firmware/mega` | Firmware sketch directory |
 | `CONTROLLER_DIR` | `controller` | Rust controller directory |
 | `BUILD_PROFILE` | `release` | Cargo build profile |
-| `SERVICE_NAME` | empty | Optional systemd service to stop and start |
+| `SERVICE_NAME` | empty | Optional systemd service to stop and restart instead of running the controller directly |
 
 When `SERVICE_NAME` is set, the current user must have permission to run
-`systemctl stop` and `systemctl restart` for that service.
+`systemctl stop` and `systemctl restart` for that service. When it is empty, the
+controller runs in the foreground and its output remains visible in the
+terminal.

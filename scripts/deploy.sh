@@ -52,7 +52,10 @@ if [[ -n "${SERVICE_NAME}" ]]; then
     printf '[5/5] Restarting systemd service: %s...\n' "${SERVICE_NAME}"
     systemctl restart "${SERVICE_NAME}"
 else
-    printf '[5/5] No systemd service configured; skipping start.\n'
+    printf '[5/5] Running controller in the foreground...\n'
+    ARDUINO_PORT="${ARDUINO_PORT}" cargo run \
+        --manifest-path "${CONTROLLER_PATH}/Cargo.toml" \
+        --profile "${BUILD_PROFILE}"
 fi
 
 printf 'Deployment completed successfully.\n'
