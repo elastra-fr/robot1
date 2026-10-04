@@ -410,9 +410,11 @@ void setup() {
 }
 
 void loop() {
-  const unsigned long now = millis();
-
   processSerialInput();
+
+  // Serial handlers update lastContactMs with millis(). Read the loop timestamp
+  // afterwards so unsigned elapsed-time calculations cannot underflow.
+  const unsigned long now = millis();
   updateSimulation(now);
 
   if (sessionActive && now - lastContactMs > WATCHDOG_TIMEOUT_MS) {
