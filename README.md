@@ -47,18 +47,22 @@ Default serial configuration:
 Current protocol:
 
 ```text
-Arduino -> READY
-Pi      -> PING
-Arduino -> PONG
-
-Pi      -> LED ON
-Arduino -> OK
-
-Pi      -> LED OFF
-Arduino -> OK
+Pi      -> HELLO
+Arduino -> HELLO_ACK
+Pi      -> SET_MOTION
+Arduino -> ACK
+Arduino -> TELEMETRY (10 Hz)
+Pi      -> HEARTBEAT (4 Hz)
 ```
 
-The end-to-end Rust ↔ Arduino communication has been validated.
+Protocol v1 uses binary COBS framing, session identifiers, sequence numbers and
+CRC-16 validation. Its complete specification is in
+[`protocol/serial-v1.md`](protocol/serial-v1.md).
+
+The current firmware is a safe simulation: it does not drive motor outputs. It
+simulates differential motion, encoder positions, a distance sensor and battery
+voltage. The controller cycles through forward motion, rotation, reverse motion
+and stop while displaying telemetry continuously.
 
 ## Development workflow
 
@@ -168,10 +172,9 @@ Before merging into `master`:
 
 ## Next steps
 
-- formalize the serial protocol;
-- add structured status and sensor messages;
-- distinguish responses from asynchronous events;
 - add motor control and encoder feedback;
+- validate protocol v1 under disconnects, corrupted frames and sustained load;
+- move serial I/O into a dedicated controller worker;
 - add higher-level sensing and navigation.
 
 ## Deployment

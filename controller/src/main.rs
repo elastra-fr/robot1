@@ -1,133 +1,301 @@
-use std::io::{self, BufRead, BufReader, Write};
-use std::time::Duration;
+mod protocol;
 
-fn read_message(reader: &mut impl BufRead) -> io::Result<String> {
-    let mut line = String::new();
+use protocol::{Frame, FrameDecoder, message_type};
+use serialport::{ClearBuffer, SerialPort};
+use std::collections::VecDeque;
+use std::io::{self, Read, Write};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-    if reader.read_line(&mut line)? == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "Arduino serial connection closed",
-        ));
+const SERIAL_TIMEOUT: Duration = Duration::from_millis(50);
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(500);
+const HANDSHAKE_ATTEMPTS: usize = 10;
+const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(250);
+
+struct SerialLink {
+    port: Box<dyn SerialPort>,
+    decoder: FrameDecoder,
+    pending_frames: VecDeque<Frame>,
+    session: u32,
+    next_sequence: u16,
+}
+
+impl SerialLink {
+    fn open(port_name: &str, session: u32) -> io::Result<Self> {
+        let port = serialport::new(port_name, 115_200)
+            .timeout(SERIAL_TIMEOUT)
+            .open()?;
+        port.clear(ClearBuffer::Input)?;
+
+        Ok(Self {
+            port,
+            decoder: FrameDecoder::default(),
+            pending_frames: VecDeque::new(),
+            session,
+            next_sequence: 1,
+        })
     }
 
-    let message = line.trim().to_string();
-    println!("Arduino -> {message}");
+    fn send(&mut self, message_type: u8, payload: &[u8]) -> io::Result<u16> {
+        let sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.wrapping_add(1);
 
-    Ok(message)
-}
+        let bytes = Frame {
+            message_type,
+            session: self.session,
+            sequence,
+            payload: payload.to_vec(),
+        }
+        .encode()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
 
-fn is_ready_message(message: &str) -> bool {
-    let Some(fragment) = message.strip_suffix("READY") else {
-        return false;
-    };
+        self.port.write_all(&bytes)?;
+        self.port.flush()?;
+        Ok(sequence)
+    }
 
-    fragment.is_empty() || "READY".starts_with(fragment)
-}
+    fn poll(&mut self) -> io::Result<Option<Frame>> {
+        if let Some(frame) = self.pending_frames.pop_front() {
+            return Ok(Some(frame));
+        }
 
-fn wait_for(reader: &mut impl BufRead, expected: &str) -> io::Result<()> {
-    loop {
-        let message = read_message(reader)?;
-        if message == expected || (expected == "READY" && is_ready_message(&message)) {
-            return Ok(());
+        let mut buffer = [0_u8; 128];
+        match self.port.read(&mut buffer) {
+            Ok(0) => Ok(None),
+            Ok(size) => {
+                for byte in &buffer[..size] {
+                    match self.decoder.push(*byte) {
+                        Some(Ok(frame)) if frame.session == self.session => {
+                            self.pending_frames.push_back(frame);
+                        }
+                        Some(Ok(frame)) => {
+                            eprintln!(
+                                "Ignoring stale session {:08x} (current {:08x})",
+                                frame.session, self.session
+                            );
+                        }
+                        Some(Err(error)) => eprintln!("Discarding invalid serial frame: {error}"),
+                        None => {}
+                    }
+                }
+
+                Ok(self.pending_frames.pop_front())
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                ) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
         }
     }
 }
 
-fn send_command(
-    reader: &mut impl BufRead,
-    writer: &mut impl Write,
-    command: &str,
-    expected: &str,
-) -> io::Result<()> {
-    loop {
-        println!("Pi -> {command}");
-        writeln!(writer, "{command}")?;
-        writer.flush()?;
+#[derive(Clone, Copy)]
+struct MotionPhase {
+    name: &'static str,
+    left_mm_s: i16,
+    right_mm_s: i16,
+    duration: Duration,
+}
 
-        loop {
-            let message = read_message(reader)?;
+const MOTION_SCRIPT: [MotionPhase; 4] = [
+    MotionPhase {
+        name: "forward",
+        left_mm_s: 200,
+        right_mm_s: 200,
+        duration: Duration::from_secs(3),
+    },
+    MotionPhase {
+        name: "rotate right",
+        left_mm_s: 150,
+        right_mm_s: -150,
+        duration: Duration::from_secs(2),
+    },
+    MotionPhase {
+        name: "reverse",
+        left_mm_s: -150,
+        right_mm_s: -150,
+        duration: Duration::from_secs(3),
+    },
+    MotionPhase {
+        name: "stop",
+        left_mm_s: 0,
+        right_mm_s: 0,
+        duration: Duration::from_secs(2),
+    },
+];
 
-            if message == expected {
+fn new_session() -> u32 {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let session = (now.as_secs() as u32) ^ now.subsec_nanos();
+    session.max(1)
+}
+
+fn handshake(link: &mut SerialLink) -> io::Result<()> {
+    println!("Synchronizing protocol session {:08x}...", link.session);
+
+    for attempt in 1..=HANDSHAKE_ATTEMPTS {
+        let sequence = link.send(message_type::HELLO, &[])?;
+        println!("Pi -> HELLO seq={sequence} attempt={attempt}");
+        let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
+
+        while Instant::now() < deadline {
+            if let Some(frame) = link.poll()?
+                && frame.message_type == message_type::HELLO_ACK
+                && frame.sequence == sequence
+            {
+                println!("Arduino -> HELLO_ACK seq={sequence}");
                 return Ok(());
             }
-
-            if is_ready_message(&message) {
-                println!("Arduino restarted; resending {command}...");
-                break;
-            }
-
-            if message.starts_with("ERR ") {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Arduino rejected {command}: {message}"),
-                ));
-            }
         }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::TimedOut,
+        "Arduino did not acknowledge the protocol handshake",
+    ))
+}
+
+fn send_motion(link: &mut SerialLink, phase: MotionPhase) -> io::Result<()> {
+    if phase.left_mm_s == 0 && phase.right_mm_s == 0 {
+        let sequence = link.send(message_type::STOP, &[])?;
+        println!("Pi -> STOP seq={sequence} phase={}", phase.name);
+        return Ok(());
+    }
+
+    let mut payload = Vec::with_capacity(4);
+    payload.extend_from_slice(&phase.left_mm_s.to_le_bytes());
+    payload.extend_from_slice(&phase.right_mm_s.to_le_bytes());
+    let sequence = link.send(message_type::SET_MOTION, &payload)?;
+
+    println!(
+        "Pi -> SET_MOTION seq={sequence} phase={} left={}mm/s right={}mm/s",
+        phase.name, phase.left_mm_s, phase.right_mm_s
+    );
+    Ok(())
+}
+
+fn display_frame(frame: Frame) {
+    match frame.message_type {
+        message_type::ACK => println!("Arduino -> ACK seq={}", frame.sequence),
+        message_type::TELEMETRY => match Telemetry::decode(&frame.payload) {
+            Some(telemetry) => println!(
+                "Telemetry t={}ms state={} target=({},{})mm/s position=({},{})mm distance={}mm battery={}mV last_cmd={}",
+                telemetry.uptime_ms,
+                telemetry.state,
+                telemetry.left_target_mm_s,
+                telemetry.right_target_mm_s,
+                telemetry.left_position_mm,
+                telemetry.right_position_mm,
+                telemetry.distance_mm,
+                telemetry.battery_mv,
+                telemetry.last_command_sequence
+            ),
+            None => eprintln!("Arduino -> invalid TELEMETRY payload"),
+        },
+        message_type::ERROR => eprintln!(
+            "Arduino -> ERROR seq={} payload={:02x?}",
+            frame.sequence, frame.payload
+        ),
+        other => eprintln!("Arduino -> unexpected message type 0x{other:02x}"),
+    }
+}
+
+struct Telemetry {
+    uptime_ms: u32,
+    state: u8,
+    left_target_mm_s: i16,
+    right_target_mm_s: i16,
+    left_position_mm: i32,
+    right_position_mm: i32,
+    distance_mm: u16,
+    battery_mv: u16,
+    last_command_sequence: u16,
+}
+
+impl Telemetry {
+    fn decode(payload: &[u8]) -> Option<Self> {
+        if payload.len() != 23 {
+            return None;
+        }
+
+        Some(Self {
+            uptime_ms: u32::from_le_bytes(payload[0..4].try_into().ok()?),
+            state: payload[4],
+            left_target_mm_s: i16::from_le_bytes(payload[5..7].try_into().ok()?),
+            right_target_mm_s: i16::from_le_bytes(payload[7..9].try_into().ok()?),
+            left_position_mm: i32::from_le_bytes(payload[9..13].try_into().ok()?),
+            right_position_mm: i32::from_le_bytes(payload[13..17].try_into().ok()?),
+            distance_mm: u16::from_le_bytes(payload[17..19].try_into().ok()?),
+            battery_mv: u16::from_le_bytes(payload[19..21].try_into().ok()?),
+            last_command_sequence: u16::from_le_bytes(payload[21..23].try_into().ok()?),
+        })
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port_name = std::env::var("ARDUINO_PORT").unwrap_or_else(|_| "/dev/ttyACM0".to_string());
+    let session = new_session();
 
     println!("Opening Arduino serial port: {port_name}");
-    let port = serialport::new(&port_name, 115_200)
-        .timeout(Duration::from_secs(5))
-        .open()?;
+    let mut link = SerialLink::open(&port_name, session)?;
+    handshake(&mut link)?;
 
-    let mut reader = BufReader::new(port.try_clone()?);
-    let mut writer = port;
-
-    println!("Waiting for Arduino...");
-    wait_for(&mut reader, "READY")?;
-
-    send_command(&mut reader, &mut writer, "PING", "PONG")?;
-
-    println!("Handshake complete. Starting development loop (Ctrl+C to stop).");
-    let mut led_on = false;
+    println!("Protocol synchronized. Starting simulation loop (Ctrl+C to stop).");
+    let mut phase_index = 0;
+    let mut phase_deadline = Instant::now() + MOTION_SCRIPT[phase_index].duration;
+    let mut heartbeat_deadline = Instant::now();
+    send_motion(&mut link, MOTION_SCRIPT[phase_index])?;
 
     loop {
-        led_on = !led_on;
-        let command = if led_on { "LED ON" } else { "LED OFF" };
+        let now = Instant::now();
 
-        send_command(&mut reader, &mut writer, command, "OK")?;
-        std::thread::sleep(Duration::from_secs(1));
+        if now >= phase_deadline {
+            phase_index = (phase_index + 1) % MOTION_SCRIPT.len();
+            let phase = MOTION_SCRIPT[phase_index];
+            send_motion(&mut link, phase)?;
+            phase_deadline = now + phase.duration;
+        }
+
+        if now >= heartbeat_deadline {
+            link.send(message_type::HEARTBEAT, &[])?;
+            heartbeat_deadline = now + HEARTBEAT_INTERVAL;
+        }
+
+        if let Some(frame) = link.poll()? {
+            display_frame(frame);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{send_command, wait_for};
-    use std::io::{BufReader, Cursor};
+    use super::Telemetry;
 
     #[test]
-    fn accepts_ready_merged_across_resets() {
-        let responses = Cursor::new(b"READREADY\n");
-        let mut reader = BufReader::new(responses);
+    fn decodes_simulated_telemetry() {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&1_234_u32.to_le_bytes());
+        payload.push(1);
+        payload.extend_from_slice(&200_i16.to_le_bytes());
+        payload.extend_from_slice(&(-100_i16).to_le_bytes());
+        payload.extend_from_slice(&500_i32.to_le_bytes());
+        payload.extend_from_slice(&(-250_i32).to_le_bytes());
+        payload.extend_from_slice(&420_u16.to_le_bytes());
+        payload.extend_from_slice(&11_900_u16.to_le_bytes());
+        payload.extend_from_slice(&7_u16.to_le_bytes());
 
-        wait_for(&mut reader, "READY").unwrap();
-    }
+        let telemetry = Telemetry::decode(&payload).unwrap();
 
-    #[test]
-    fn resends_command_when_arduino_restarts() {
-        let responses = Cursor::new(b"READREADY\nPONG\n");
-        let mut reader = BufReader::new(responses);
-        let mut commands = Vec::new();
-
-        send_command(&mut reader, &mut commands, "PING", "PONG").unwrap();
-
-        assert_eq!(commands, b"PING\nPING\n");
-    }
-
-    #[test]
-    fn fails_when_arduino_rejects_command() {
-        let responses = Cursor::new(b"ERR UNKNOWN_COMMAND\n");
-        let mut reader = BufReader::new(responses);
-        let mut commands = Vec::new();
-
-        let error = send_command(&mut reader, &mut commands, "MOVE", "OK").unwrap_err();
-
-        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
-        assert_eq!(commands, b"MOVE\n");
+        assert_eq!(telemetry.uptime_ms, 1_234);
+        assert_eq!(telemetry.left_target_mm_s, 200);
+        assert_eq!(telemetry.right_position_mm, -250);
+        assert_eq!(telemetry.distance_mm, 420);
+        assert_eq!(telemetry.last_command_sequence, 7);
     }
 }
