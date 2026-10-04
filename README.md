@@ -35,6 +35,49 @@ project/
 └── README.md
 ```
 
+### Controller structure
+
+The Rust controller separates hardware integration from robot decisions:
+
+```text
+Arduino adapter ─┐
+Future vision  ──┼─> observations ─> RobotState ─> behavior
+Future audio   ──┘                                  │
+                                                   ▼
+                                           intent and safety
+                                                   │
+                                                   ▼
+                                           actuator command
+                                                   │
+                                                   ▼
+                                                Arduino
+```
+
+`Runtime` is the single owner of `RobotState`. Hardware adapters produce typed,
+timestamped observations instead of modifying shared state. Behaviors only read
+the domain state and produce intentions. The safety layer validates an intention
+before it becomes an actuator command.
+
+The source tree reflects these boundaries:
+
+```text
+controller/src/
+├── app/          # Runtime and component supervision
+├── adapters/     # External hardware and protocol integration
+├── behaviors/    # Replaceable high-level behaviors
+├── control/      # Behavior interface and safety policy
+├── domain/       # Robot state, observations, intentions and commands
+├── ports/        # Interfaces implemented by external adapters
+├── config.rs     # Runtime configuration
+├── lib.rs        # Controller library
+└── main.rs       # Process entry point only
+```
+
+Timing-sensitive motor control, encoder feedback loops and the final watchdog
+remain on the Arduino. Camera and microphone recognition will run as isolated,
+on-demand workers on the Raspberry Pi. They will publish recognition results,
+not raw continuous media streams, into the controller state.
+
 ## Current communication
 
 Default serial configuration:
