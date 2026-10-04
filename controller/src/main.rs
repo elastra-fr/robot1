@@ -12,6 +12,7 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(500);
 const HANDSHAKE_ATTEMPTS: usize = 10;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(250);
 const TELEMETRY_TIMEOUT: Duration = Duration::from_millis(1_500);
+const SAFE_STATE_TIMEOUT: Duration = Duration::from_millis(1_500);
 const TELEMETRY_LOG_INTERVAL: Duration = Duration::from_secs(1);
 
 struct SerialLink {
@@ -60,6 +61,21 @@ impl SerialLink {
         self.port.write_all(&bytes)?;
         self.port.flush()?;
         Ok(sequence)
+    }
+
+    fn start_new_session(&mut self, session: u32, boot_delay: Duration) -> io::Result<()> {
+        println!(
+            "Waiting {}ms before starting a recovery session...",
+            boot_delay.as_millis()
+        );
+        std::thread::sleep(boot_delay);
+        self.port.clear(ClearBuffer::Input)?;
+
+        self.decoder = FrameDecoder::default();
+        self.pending_frames.clear();
+        self.session = session;
+        self.next_sequence = 1;
+        Ok(())
     }
 
     fn poll(&mut self) -> io::Result<Option<Frame>> {
@@ -183,6 +199,64 @@ fn handshake(link: &mut SerialLink) -> io::Result<()> {
         io::ErrorKind::TimedOut,
         "Arduino did not acknowledge the protocol handshake",
     ))
+}
+
+fn confirm_safe_idle(
+    link: &mut SerialLink,
+    telemetry_log: &mut TelemetryLog,
+) -> io::Result<Instant> {
+    let stop_sequence = link.send(message_type::STOP, &[])?;
+    println!("Pi -> STOP seq={stop_sequence} reason=session initialization");
+
+    let deadline = Instant::now() + SAFE_STATE_TIMEOUT;
+    let mut heartbeat_deadline = Instant::now() + HEARTBEAT_INTERVAL;
+    let mut stop_acknowledged = false;
+    let mut idle_confirmed = false;
+    let mut last_telemetry = None;
+
+    while Instant::now() < deadline {
+        let now = Instant::now();
+        if now >= heartbeat_deadline {
+            link.send(message_type::HEARTBEAT, &[])?;
+            heartbeat_deadline = now + HEARTBEAT_INTERVAL;
+        }
+
+        if let Some(frame) = link.poll()? {
+            if frame.message_type == message_type::ACK && frame.sequence == stop_sequence {
+                stop_acknowledged = true;
+            }
+
+            if frame.message_type == message_type::TELEMETRY
+                && let Some(telemetry) = Telemetry::decode(&frame.payload)
+            {
+                last_telemetry = Some(Instant::now());
+                idle_confirmed = telemetry.confirms_stop(stop_sequence);
+            }
+
+            display_frame(frame, telemetry_log);
+
+            if stop_acknowledged && idle_confirmed {
+                println!(
+                    "Arduino safe state confirmed for session {:08x}",
+                    link.session
+                );
+                return Ok(last_telemetry.unwrap_or_else(Instant::now));
+            }
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::TimedOut,
+        "Arduino did not confirm STOP and idle telemetry",
+    ))
+}
+
+fn establish_safe_session(
+    link: &mut SerialLink,
+    telemetry_log: &mut TelemetryLog,
+) -> io::Result<Instant> {
+    handshake(link)?;
+    confirm_safe_idle(link, telemetry_log)
 }
 
 fn send_motion(link: &mut SerialLink, phase: MotionPhase) -> io::Result<()> {
@@ -318,22 +392,29 @@ impl Telemetry {
             _ => "unknown",
         }
     }
+
+    fn confirms_stop(&self, stop_sequence: u16) -> bool {
+        self.state == 0
+            && self.left_target_mm_s == 0
+            && self.right_target_mm_s == 0
+            && self.last_command_sequence == stop_sequence
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port_name = std::env::var("ARDUINO_PORT").unwrap_or_else(|_| "/dev/ttyACM0".to_string());
     let session = new_session();
+    let boot_delay = boot_delay()?;
 
     println!("Opening Arduino serial port: {port_name}");
-    let mut link = SerialLink::open(&port_name, session, boot_delay()?)?;
-    handshake(&mut link)?;
+    let mut link = SerialLink::open(&port_name, session, boot_delay)?;
+    let mut telemetry_log = TelemetryLog::default();
+    let mut last_telemetry = establish_safe_session(&mut link, &mut telemetry_log)?;
 
     println!("Protocol synchronized. Starting simulation loop (Ctrl+C to stop).");
     let mut phase_index = 0;
     let mut phase_deadline = Instant::now() + MOTION_SCRIPT[phase_index].duration;
     let mut heartbeat_deadline = Instant::now();
-    let mut telemetry_log = TelemetryLog::default();
-    let mut last_telemetry = Instant::now();
     send_motion(&mut link, MOTION_SCRIPT[phase_index])?;
 
     loop {
@@ -345,14 +426,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let now = Instant::now();
         if telemetry_timed_out(last_telemetry, now) {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!(
-                    "no valid telemetry received for {}ms; Arduino session lost",
-                    TELEMETRY_TIMEOUT.as_millis()
-                ),
-            )
-            .into());
+            eprintln!(
+                "No valid telemetry for {}ms; recovering Arduino session...",
+                TELEMETRY_TIMEOUT.as_millis()
+            );
+
+            link.start_new_session(new_session(), boot_delay)?;
+            telemetry_log = TelemetryLog::default();
+            last_telemetry = establish_safe_session(&mut link, &mut telemetry_log)?;
+
+            println!("Session recovered. Restarting simulation from a safe state.");
+            phase_index = 0;
+            send_motion(&mut link, MOTION_SCRIPT[phase_index])?;
+            let recovered_at = Instant::now();
+            phase_deadline = recovered_at + MOTION_SCRIPT[phase_index].duration;
+            heartbeat_deadline = recovered_at + HEARTBEAT_INTERVAL;
+            continue;
         }
 
         if now >= phase_deadline {
@@ -435,5 +524,26 @@ mod tests {
             start,
             start + Duration::from_millis(1_500)
         ));
+    }
+
+    #[test]
+    fn confirms_stop_only_for_matching_idle_telemetry() {
+        let mut telemetry = Telemetry {
+            uptime_ms: 100,
+            state: 0,
+            left_target_mm_s: 0,
+            right_target_mm_s: 0,
+            left_position_mm: 10,
+            right_position_mm: 20,
+            distance_mm: 500,
+            battery_mv: 12_000,
+            last_command_sequence: 7,
+        };
+
+        assert!(telemetry.confirms_stop(7));
+        assert!(!telemetry.confirms_stop(8));
+
+        telemetry.state = 1;
+        assert!(!telemetry.confirms_stop(7));
     }
 }

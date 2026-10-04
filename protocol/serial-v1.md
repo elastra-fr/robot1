@@ -75,9 +75,11 @@ instead of accumulating motion. The simulated firmware accepts speeds between
 | 21 | 2 | `u16` | Last applied command sequence |
 
 Telemetry is currently published at 10 Hz. It is not acknowledged: a stale
-sample may be dropped in favor of a newer one. The controller considers the
-session lost and exits with an error when no valid telemetry frame is received
-for 1500 ms.
+sample may be dropped in favor of a newer one. When no valid telemetry frame is
+received for 1500 ms, the controller considers the session lost. It observes a
+silent startup delay, discards stale input, creates a new session and performs a
+new handshake. It then sends `STOP` and requires both the matching `ACK` and an
+idle telemetry sample before restarting the simulation.
 
 ## Safety behavior
 
