@@ -77,9 +77,9 @@ instead of accumulating motion. The simulated firmware accepts speeds between
 Telemetry is currently published at 10 Hz. It is not acknowledged: a stale
 sample may be dropped in favor of a newer one. When no valid telemetry frame is
 received for 1500 ms, the controller considers the session lost. It observes a
-silent startup delay, discards stale input, creates a new session and performs a
-new handshake. It then sends `STOP` and requires both the matching `ACK` and an
-idle telemetry sample before restarting the simulation.
+silent startup delay after closing and reopening the serial port, creates a new
+session and performs a new handshake. It then sends `STOP` and requires both the
+matching `ACK` and an idle telemetry sample before restarting the simulation.
 
 ## Safety behavior
 

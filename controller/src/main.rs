@@ -63,21 +63,6 @@ impl SerialLink {
         Ok(sequence)
     }
 
-    fn start_new_session(&mut self, session: u32, boot_delay: Duration) -> io::Result<()> {
-        println!(
-            "Waiting {}ms before starting a recovery session...",
-            boot_delay.as_millis()
-        );
-        std::thread::sleep(boot_delay);
-        self.port.clear(ClearBuffer::Input)?;
-
-        self.decoder = FrameDecoder::default();
-        self.pending_frames.clear();
-        self.session = session;
-        self.next_sequence = 1;
-        Ok(())
-    }
-
     fn poll(&mut self) -> io::Result<Option<Frame>> {
         if let Some(frame) = self.pending_frames.pop_front() {
             return Ok(Some(frame));
@@ -431,7 +416,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 TELEMETRY_TIMEOUT.as_millis()
             );
 
-            link.start_new_session(new_session(), boot_delay)?;
+            println!("Closing and reopening Arduino serial port: {port_name}");
+            drop(link);
+            link = SerialLink::open(&port_name, new_session(), boot_delay)?;
             telemetry_log = TelemetryLog::default();
             last_telemetry = establish_safe_session(&mut link, &mut telemetry_log)?;
 
