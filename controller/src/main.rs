@@ -1,24 +1,48 @@
-use std::io::{Read, Write};
-use std::thread;
+use std::io::{BufRead, BufReader, Write};
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut port = serialport::new("/dev/ttyACM0", 115_200)
-        .timeout(Duration::from_secs(2))
+    let port = serialport::new("/dev/ttyACM0", 115_200)
+        .timeout(Duration::from_secs(5))
         .open()?;
 
-    // Le Mega redémarre à l'ouverture du port série
-    thread::sleep(Duration::from_secs(2));
+    let mut reader = BufReader::new(port.try_clone()?);
+    let mut writer = port;
 
-    port.write_all(b"PING\n")?;
+    println!("Waiting for Arduino...");
 
-    let mut buffer = [0u8; 128];
-    let n = port.read(&mut buffer)?;
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
 
-    println!(
-        "Arduino: {}",
-        String::from_utf8_lossy(&buffer[..n]).trim()
-    );
+        if line.trim() == "READY" {
+            println!("Arduino ready");
+            break;
+        }
+    }
+
+    writer.write_all(b"PING\n")?;
+
+    let mut response = String::new();
+    reader.read_line(&mut response)?;
+
+    println!("Arduino: {}", response.trim());
+
+    writer.write_all(b"LED ON\n")?;
+
+    response.clear();
+    reader.read_line(&mut response)?;
+
+    println!("LED ON: {}", response.trim());
+
+    std::thread::sleep(Duration::from_secs(1));
+
+    writer.write_all(b"LED OFF\n")?;
+
+    response.clear();
+    reader.read_line(&mut response)?;
+
+    println!("LED OFF: {}", response.trim());
 
     Ok(())
 }
