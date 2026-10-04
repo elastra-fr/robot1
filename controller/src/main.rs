@@ -17,10 +17,18 @@ fn read_message(reader: &mut impl BufRead) -> io::Result<String> {
     Ok(message)
 }
 
+fn is_ready_message(message: &str) -> bool {
+    let Some(fragment) = message.strip_suffix("READY") else {
+        return false;
+    };
+
+    fragment.is_empty() || "READY".starts_with(fragment)
+}
+
 fn wait_for(reader: &mut impl BufRead, expected: &str) -> io::Result<()> {
     loop {
         let message = read_message(reader)?;
-        if message == expected {
+        if message == expected || (expected == "READY" && is_ready_message(&message)) {
             return Ok(());
         }
     }
@@ -44,7 +52,7 @@ fn send_command(
                 return Ok(());
             }
 
-            if message == "READY" {
+            if is_ready_message(&message) {
                 println!("Arduino restarted; resending {command}...");
                 break;
             }
@@ -89,12 +97,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::send_command;
+    use super::{send_command, wait_for};
     use std::io::{BufReader, Cursor};
 
     #[test]
+    fn accepts_ready_merged_across_resets() {
+        let responses = Cursor::new(b"READREADY\n");
+        let mut reader = BufReader::new(responses);
+
+        wait_for(&mut reader, "READY").unwrap();
+    }
+
+    #[test]
     fn resends_command_when_arduino_restarts() {
-        let responses = Cursor::new(b"READY\nPONG\n");
+        let responses = Cursor::new(b"READREADY\nPONG\n");
         let mut reader = BufReader::new(responses);
         let mut commands = Vec::new();
 

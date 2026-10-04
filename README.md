@@ -111,6 +111,61 @@ Board type and serial port should remain configurable.
 - Rust and Arduino firmware live in the same repository;
 - the Raspberry Pi can update both the controller and the Arduino firmware.
 
+## Git conventions
+
+### Branches
+
+`master` must remain buildable and deployable. Development is done on
+short-lived branches created from an up-to-date `master` branch.
+
+Branch names use lowercase kebab-case with one of these prefixes:
+
+| Prefix | Purpose | Example |
+| --- | --- | --- |
+| `feat/` | New behavior or capability | `feat/simulated-control-loop` |
+| `fix/` | Bug fix | `fix/serial-reconnect` |
+| `refactor/` | Internal change without new behavior | `refactor/protocol-parser` |
+| `docs/` | Documentation only | `docs/git-conventions` |
+| `test/` | Tests and simulation tooling | `test/serial-frame-errors` |
+| `chore/` | Maintenance and repository tooling | `chore/update-dependencies` |
+
+Avoid personal names, machine names and issue descriptions containing sensitive
+information in branch names.
+
+### Commits
+
+Commit messages follow the Conventional Commits format:
+
+```text
+<type>(<scope>): <short description>
+```
+
+Common types are `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `build`,
+`ci` and `perf`. Recommended scopes are `controller`, `firmware`, `protocol`,
+`deploy` and `docs`.
+
+Examples:
+
+```text
+feat(controller): add simulated control loop
+feat(firmware): publish simulated sensor data
+fix(protocol): recover after a serial reset
+docs(readme): document Git conventions
+```
+
+Use the imperative mood, keep the description concise and do not end it with a
+period. Each commit should represent one coherent change. Mark breaking changes
+with `!`, for example `feat(protocol)!: add binary message framing`, and explain
+the migration in the commit body.
+
+Before merging into `master`:
+
+- format and test the Rust controller;
+- compile the Arduino firmware;
+- verify the controller-to-Arduino simulation on the target hardware;
+- review the diff for credentials, personal paths and generated files;
+- update the protocol documentation when messages or behavior change.
+
 ## Next steps
 
 - formalize the serial protocol;
