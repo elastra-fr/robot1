@@ -1,6 +1,23 @@
 use std::io::{BufRead, BufReader, Write};
 use std::time::Duration;
 
+fn wait_for(
+    reader: &mut BufReader<Box<dyn serialport::SerialPort>>,
+    expected: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+
+        let message = line.trim();
+        println!("Arduino -> {message}");
+
+        if message == expected {
+            return Ok(());
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = serialport::new("/dev/ttyACM0", 115_200)
         .timeout(Duration::from_secs(5))
@@ -10,39 +27,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut writer = port;
 
     println!("Waiting for Arduino...");
-
-    loop {
-        let mut line = String::new();
-        reader.read_line(&mut line)?;
-
-        if line.trim() == "READY" {
-            println!("Arduino ready");
-            break;
-        }
-    }
+    wait_for(&mut reader, "READY")?;
 
     writer.write_all(b"PING\n")?;
-
-    let mut response = String::new();
-    reader.read_line(&mut response)?;
-
-    println!("Arduino: {}", response.trim());
+    wait_for(&mut reader, "PONG")?;
 
     writer.write_all(b"LED ON\n")?;
-
-    response.clear();
-    reader.read_line(&mut response)?;
-
-    println!("LED ON: {}", response.trim());
+    wait_for(&mut reader, "OK")?;
 
     std::thread::sleep(Duration::from_secs(1));
 
     writer.write_all(b"LED OFF\n")?;
-
-    response.clear();
-    reader.read_line(&mut response)?;
-
-    println!("LED OFF: {}", response.trim());
+    wait_for(&mut reader, "OK")?;
 
     Ok(())
 }
