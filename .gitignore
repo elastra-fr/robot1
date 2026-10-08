@@ -22,3 +22,6 @@ Thumbs.db
 
 # Keep dependency versions reproducible on the Raspberry Pi.
 !**/Cargo.lock
+
+# Hardware notes and schematics are kept local during the prototype phase.
+hardware/
