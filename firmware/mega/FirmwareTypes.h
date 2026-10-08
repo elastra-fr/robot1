@@ -7,6 +7,7 @@ enum class CommandType : uint8_t {
   Heartbeat,
   SetMotion,
   Stop,
+  StartEnvironmentScan,
   Unknown,
 };
 
@@ -52,4 +53,12 @@ struct SensorData {
   uint8_t flags;
   uint16_t ultrasonicAMm;
   uint16_t ultrasonicBMm;
+};
+
+struct EnvironmentScanSample {
+  uint16_t angleADeg;
+  uint16_t distanceAMm;
+  uint16_t angleBDeg;
+  uint16_t distanceBMm;
+  uint8_t validFlags;
 };

@@ -1,10 +1,12 @@
-use super::{ConnectionHealth, Observation, Telemetry};
+use super::{ConnectionHealth, Observation, SensorSnapshot, Telemetry};
 use std::time::{Duration, Instant};
 
 pub struct RobotState {
     connection: ConnectionHealth,
     telemetry: Option<Telemetry>,
     telemetry_received_at: Option<Instant>,
+    sensors: Option<SensorSnapshot>,
+    sensors_received_at: Option<Instant>,
 }
 
 impl Default for RobotState {
@@ -13,6 +15,8 @@ impl Default for RobotState {
             connection: ConnectionHealth::Starting,
             telemetry: None,
             telemetry_received_at: None,
+            sensors: None,
+            sensors_received_at: None,
         }
     }
 }
@@ -22,6 +26,10 @@ impl RobotState {
         match observation {
             Observation::ArduinoTelemetry(telemetry) => {
                 self.record_telemetry(telemetry, received_at);
+            }
+            Observation::ArduinoSensors(sensors) => {
+                self.sensors = Some(sensors);
+                self.sensors_received_at = Some(received_at);
             }
         }
     }
@@ -42,6 +50,14 @@ impl RobotState {
 
     pub fn telemetry(&self) -> Option<&Telemetry> {
         self.telemetry.as_ref()
+    }
+
+    pub fn sensors(&self) -> Option<&SensorSnapshot> {
+        self.sensors.as_ref()
+    }
+
+    pub fn sensors_received_at(&self) -> Option<Instant> {
+        self.sensors_received_at
     }
 
     pub fn telemetry_is_stale(&self, now: Instant, timeout: Duration) -> bool {

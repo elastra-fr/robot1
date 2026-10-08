@@ -3,5 +3,5 @@ mod protocol;
 mod serial;
 mod session;
 
-pub use messages::{ArduinoEvent, MotionStatus, SensorStatus};
+pub use messages::{ArduinoEvent, EnvironmentScanSample, MotionStatus, SensorStatus};
 pub use session::ArduinoSession;

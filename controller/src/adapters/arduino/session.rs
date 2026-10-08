@@ -69,6 +69,10 @@ impl ArduinoSession {
         Ok(())
     }
 
+    pub fn start_environment_scan(&mut self) -> io::Result<u16> {
+        self.link.send(message_type::START_ENVIRONMENT_SCAN, &[])
+    }
+
     fn establish_safe_session(
         &mut self,
         observer: &mut impl FnMut(&ArduinoEvent),
@@ -115,7 +119,7 @@ impl ArduinoSession {
         let deadline = Instant::now() + SAFE_STATE_TIMEOUT;
         let mut heartbeat_deadline = Instant::now() + self.heartbeat_interval;
         let mut stop_acknowledged = false;
-        let mut idle_telemetry = None;
+        let mut safe_telemetry = None;
 
         while Instant::now() < deadline {
             let now = Instant::now();
@@ -133,13 +137,13 @@ impl ArduinoSession {
                     ArduinoEvent::Telemetry(telemetry)
                         if telemetry.confirms_stop(stop_sequence) =>
                     {
-                        idle_telemetry = Some(telemetry.clone());
+                        safe_telemetry = Some(telemetry.clone());
                     }
                     _ => {}
                 }
                 observer(&event);
 
-                if stop_acknowledged && let Some(telemetry) = idle_telemetry {
+                if stop_acknowledged && let Some(telemetry) = safe_telemetry {
                     println!(
                         "Arduino safe state confirmed for session {:08x}",
                         self.link.session()
@@ -151,7 +155,7 @@ impl ArduinoSession {
 
         Err(io::Error::new(
             io::ErrorKind::TimedOut,
-            "Arduino did not confirm STOP and idle telemetry",
+            "Arduino did not confirm STOP and safe telemetry",
         ))
     }
 }

@@ -82,8 +82,9 @@ firmware/mega/
 ├── mega.ino                 # setup(), loop() and command dispatch
 ├── SerialCommunication.*   # USB serial protocol and telemetry
 ├── Motion.*                # motor targets and motion state
-├── Sensors.*               # sensor acquisition (currently simulated)
-├── Servos.*                # servo control boundary (not connected yet)
+├── Sensors.*               # PIR, proximity and ultrasonic acquisition
+├── Servos.*                # ultrasonic scan servo control
+├── EnvironmentScan.*       # progressive 360-degree distance scan
 ├── Safety.*                # local watchdog and future safety interlocks
 ├── FirmwareConfig.h        # shared timings and limits
 └── FirmwareTypes.h         # commands and telemetry data
@@ -99,8 +100,9 @@ The initial Mega pin assignment is centralized in `FirmwareConfig.h`:
 
 | Mega pin | Connection | Current role |
 | --- | --- | --- |
-| 22 | PIR left `OUT` | Human presence |
-| 23 | PIR right `OUT` | Human presence |
+| 6 | Scan servo signal | Rotate the two opposite ultrasonic sensors |
+| 22 | PIR front `OUT` | Human presence in front |
+| 23 | PIR back `OUT` | Human presence behind |
 | 24 | 10 cm sensor 1 `OUT` | Local bumper |
 | 25 | 10 cm sensor 2 `OUT` | Local bumper |
 | 26 | 10 cm sensor 3 `OUT` | Local bumper |
@@ -117,11 +119,36 @@ to each older GP2Y0D810 carrier because the emitter draws short current pulses.
 
 Pololu reference: https://www.pololu.com/product/1134
 
+For a test with no sensors connected, the pull-up inputs report `cliff=VOID`
+and the ultrasonic distances remain `invalid`. This state is accepted as safely
+stopped so the Pi can start and display diagnostics, but all virtual wheel
+movement remains inhibited by local safety.
+
 The two ultrasonic sensors are triggered alternately by a non-blocking state
 machine to reduce cross-talk and keep serial communication responsive. PIR
 presence is ignored during the first 60 seconds after boot while the modules
-stabilize. Motor actions remain virtual and are displayed by the Pi as `MOVE
-FORWARD`, `MOVE BACKWARD`, `TURN LEFT`, `TURN RIGHT` or `STOPPED`.
+stabilize, then each PIR transition must remain stable for 300 ms. Motor actions
+remain virtual and are displayed by the Pi as `MOVE FORWARD`, `MOVE BACKWARD`,
+`TURN LEFT`, `TURN RIGHT` or `STOPPED`.
+
+The active development behavior starts stopped. A new debounced front presence
+requests a one-second virtual left rotation; a back presence requests a
+one-second virtual right rotation. The Pi then sends `STOP`. A PIR held active
+does not retrigger the test: both PIR inputs must return to clear first. If both
+detect a presence simultaneously, the direction is ambiguous and the Pi keeps
+the robot stopped.
+
+The two ultrasonic sensors are mounted back-to-back on one servo. At startup,
+the Pi requests one environment scan. The Mega moves the servo from 0 to 180
+degrees in 5-degree steps, waits for mechanical settling, then requires a new
+measurement from each sensor. Sensor A reports the servo angle and sensor B the
+opposite direction (`angle + 180`, modulo 360), providing 360-degree coverage.
+The servo returns to 90 degrees when the scan completes. The 0-degree reference
+must be calibrated after the bracket is assembled.
+
+The servo signal uses Mega pin 6, but servo power must come from the separate
+regulated 5 V servo supply, with its ground connected to Mega ground. Do not
+power the scan servo from a Mega I/O pin.
 
 Timing-sensitive motor control, encoder feedback loops and the final watchdog
 remain on the Arduino. Camera and microphone recognition will run as isolated,
@@ -147,6 +174,9 @@ Arduino -> ACK
 Arduino -> TELEMETRY (10 Hz)
 Arduino -> SENSOR_STATUS (4 Hz)
 Arduino -> MOTION_STATUS (on change)
+Pi      -> START_ENVIRONMENT_SCAN
+Arduino -> ENVIRONMENT_SCAN_SAMPLE
+Arduino -> ENVIRONMENT_SCAN_STATUS
 Pi      -> HEARTBEAT (4 Hz)
 ```
 
@@ -156,9 +186,9 @@ CRC-16 validation. Its complete specification is in
 
 The current firmware does not drive motor outputs. It keeps differential motion
 and encoder positions virtual while reading the PIR, 10 cm and ultrasonic
-sensors for hardware bring-up. The controller cycles through forward motion,
-rotation, reverse motion and stop while displaying virtual motor actions and
-real sensor status continuously.
+sensors for hardware bring-up. The controller remains stopped until a debounced
+PIR presence triggers the short rotation test, while displaying virtual motor
+actions and real sensor status continuously.
 
 ## Development workflow
 
@@ -190,6 +220,9 @@ cargo build --release
 Arduino:
 
 ```sh
+# Required once on a new development machine or Raspberry Pi.
+arduino-cli lib install Servo
+
 arduino-cli compile \
   --fqbn arduino:avr:mega \
   firmware/mega

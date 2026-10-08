@@ -11,10 +11,13 @@ constexpr uint8_t MSG_HELLO_ACK = 0x02;
 constexpr uint8_t MSG_HEARTBEAT = 0x03;
 constexpr uint8_t MSG_SET_MOTION = 0x10;
 constexpr uint8_t MSG_STOP = 0x11;
+constexpr uint8_t MSG_START_ENVIRONMENT_SCAN = 0x12;
 constexpr uint8_t MSG_ACK = 0x20;
 constexpr uint8_t MSG_TELEMETRY = 0x30;
 constexpr uint8_t MSG_SENSOR_STATUS = 0x31;
 constexpr uint8_t MSG_MOTION_STATUS = 0x32;
+constexpr uint8_t MSG_ENVIRONMENT_SCAN_SAMPLE = 0x33;
+constexpr uint8_t MSG_ENVIRONMENT_SCAN_STATUS = 0x34;
 constexpr uint8_t MSG_ERROR = 0x7f;
 
 uint16_t crc16(const uint8_t *bytes, size_t length) {
@@ -246,6 +249,27 @@ void SerialCommunication::sendMotionStatus(
   sendFrame(MSG_MOTION_STATUS, eventSequence_++, payload, sizeof(payload));
 }
 
+void SerialCommunication::sendEnvironmentScanSample(
+  const EnvironmentScanSample &sample
+) {
+  uint8_t payload[9];
+  writeU16(&payload[0], sample.angleADeg);
+  writeU16(&payload[2], sample.distanceAMm);
+  writeU16(&payload[4], sample.angleBDeg);
+  writeU16(&payload[6], sample.distanceBMm);
+  payload[8] = sample.validFlags;
+  sendFrame(
+    MSG_ENVIRONMENT_SCAN_SAMPLE,
+    eventSequence_++,
+    payload,
+    sizeof(payload)
+  );
+}
+
+void SerialCommunication::sendEnvironmentScanStatus(uint8_t status) {
+  sendFrame(MSG_ENVIRONMENT_SCAN_STATUS, eventSequence_++, &status, 1);
+}
+
 void SerialCommunication::processEncodedFrame(CommandHandler handler) {
   uint8_t raw[MAX_RAW_SIZE];
   size_t rawLength = 0;
@@ -313,6 +337,11 @@ void SerialCommunication::processFrame(
 
   if (messageType == MSG_STOP && payloadLength == 0) {
     handler({CommandType::Stop, sequence, 0, 0});
+    return;
+  }
+
+  if (messageType == MSG_START_ENVIRONMENT_SCAN && payloadLength == 0) {
+    handler({CommandType::StartEnvironmentScan, sequence, 0, 0});
     return;
   }
 

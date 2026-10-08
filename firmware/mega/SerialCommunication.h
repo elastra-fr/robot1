@@ -18,6 +18,8 @@ class SerialCommunication {
   void sendTelemetry(const TelemetryData &telemetry);
   void sendSensorStatus(const SensorData &sensors);
   void sendMotionStatus(MotionMode mode, SafetyReason reason);
+  void sendEnvironmentScanSample(const EnvironmentScanSample &sample);
+  void sendEnvironmentScanStatus(uint8_t status);
 
  private:
   static constexpr size_t HEADER_SIZE = 9;

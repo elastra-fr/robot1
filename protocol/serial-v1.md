@@ -52,10 +52,13 @@ before activating the new session.
 | `0x03` | `HEARTBEAT` | Pi → Arduino | Empty |
 | `0x10` | `SET_MOTION` | Pi → Arduino | Left and right speeds (`i16`, mm/s) |
 | `0x11` | `STOP` | Pi → Arduino | Empty |
+| `0x12` | `START_ENVIRONMENT_SCAN` | Pi → Arduino | Empty |
 | `0x20` | `ACK` | Arduino → Pi | Empty; sequence matches the command |
 | `0x30` | `TELEMETRY` | Arduino → Pi | Telemetry structure below |
 | `0x31` | `SENSOR_STATUS` | Arduino → Pi | Real sensor status structure below |
 | `0x32` | `MOTION_STATUS` | Arduino → Pi | Virtual motion and safety reason |
+| `0x33` | `ENVIRONMENT_SCAN_SAMPLE` | Arduino → Pi | Two opposite angular measurements |
+| `0x34` | `ENVIRONMENT_SCAN_STATUS` | Arduino → Pi | Scan lifecycle state |
 | `0x7f` | `ERROR` | Arduino → Pi | One-byte error code |
 
 `SET_MOTION` is absolute and idempotent: a repeated frame sets the same target
@@ -81,14 +84,17 @@ sample may be dropped in favor of a newer one. When no valid telemetry frame is
 received for 1500 ms, the controller considers the session lost. It observes a
 silent startup delay after closing and reopening the serial port, creates a new
 session and performs a new handshake. It then sends `STOP` and requires both the
-matching `ACK` and an idle telemetry sample before restarting the simulation.
+matching `ACK` and a safely stopped telemetry sample before restarting the
+controller. State `3` (local safety stop) is accepted when both virtual wheel
+targets are zero, allowing sensor diagnostics without connected safety sensors
+while still forbidding movement.
 
 ## Sensor status payload
 
 | Offset | Size | Type | Field |
 | --- | --- | --- | --- |
 | 0 | 4 | `u32` | Arduino uptime in milliseconds |
-| 4 | 1 | `u8` | PIR presence bits: left=`bit 0`, right=`bit 1` |
+| 4 | 1 | `u8` | PIR presence bits: front=`bit 0`, back=`bit 1` |
 | 5 | 1 | `u8` | 10 cm detection bits: bumpers=`bits 0..2`, ground=`bit 3` |
 | 6 | 1 | `u8` | Local hazards: bumpers=`bits 0..2`, missing ground=`bit 3` |
 | 7 | 1 | `u8` | Ready/valid flags: PIR=`bit 0`, ultrasonic A=`bit 1`, B=`bit 2` |
@@ -96,7 +102,9 @@ matching `ACK` and an idle telemetry sample before restarting the simulation.
 | 10 | 2 | `u16` | Ultrasonic B distance in mm, or `0xffff` |
 
 `SENSOR_STATUS` is published every 250 ms. The Pi prints changes immediately
-and otherwise limits the development display to about one line per second.
+and otherwise limits the development display to about one line per second. PIR
+inputs have a 60-second startup stabilization period and a 300 ms debounce in
+the Mega firmware.
 
 ## Motion status payload
 
@@ -108,6 +116,30 @@ and otherwise limits the development display to about one line per second.
 The motion remains virtual during sensor bring-up. This status provides visible
 Arduino-side confirmation without writing unframed text onto the binary serial
 link.
+
+## Environment scan
+
+`START_ENVIRONMENT_SCAN` is acknowledged like other commands. Error code `3`
+means a scan is already running. The development controller requests one scan
+after establishing a safe session.
+
+The scan moves the shared servo progressively from 0 to 180 degrees. The two
+ultrasonic sensors point in opposite directions, so every servo position yields
+two directions covering a full 360 degrees.
+
+`ENVIRONMENT_SCAN_SAMPLE` payload:
+
+| Offset | Size | Type | Field |
+| --- | --- | --- | --- |
+| 0 | 2 | `u16` | Sensor A direction in degrees (`0..180`) |
+| 2 | 2 | `u16` | Sensor A distance in mm, or `0xffff` |
+| 4 | 2 | `u16` | Sensor B direction in degrees (`180..359`, then `0`) |
+| 6 | 2 | `u16` | Sensor B distance in mm, or `0xffff` |
+| 8 | 1 | `u8` | Valid measurements: A=`bit 0`, B=`bit 1` |
+
+`ENVIRONMENT_SCAN_STATUS` contains one byte: `1=started`, `2=complete`. The
+servo uses 5-degree steps, waits 150 ms after each step, and returns to its
+90-degree center position when complete.
 
 ## Safety behavior
 

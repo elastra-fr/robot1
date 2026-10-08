@@ -1,9 +1,11 @@
 use super::supervisor::ConnectionSupervisor;
 use crate::adapters::arduino::{ArduinoEvent, ArduinoSession, SensorStatus};
-use crate::behaviors::SimulationBehavior;
+use crate::behaviors::PresenceTestBehavior;
 use crate::config::Config;
 use crate::control::{Behavior, SafetyController};
-use crate::domain::{ActuatorCommand, MotionIntent, Observation, RobotState, Telemetry};
+use crate::domain::{
+    ActuatorCommand, MotionIntent, Observation, RobotState, SensorSnapshot, Telemetry,
+};
 use crate::ports::MotionOutput;
 use std::io;
 use std::time::{Duration, Instant};
@@ -36,21 +38,39 @@ impl Runtime {
         let safety = SafetyController::new(self.config.telemetry_timeout);
         let mut supervisor =
             ConnectionSupervisor::new(self.config.heartbeat_interval, Instant::now());
-        let mut behavior = SimulationBehavior::default();
+        let mut behavior = PresenceTestBehavior::default();
 
-        println!("Protocol synchronized. Starting simulation loop (Ctrl+C to stop).");
+        println!("Protocol synchronized. Starting PIR rotation test (Ctrl+C to stop).");
         let intent = behavior.start(&state, Instant::now());
         apply_intent(&mut arduino, &safety, &state, intent, Instant::now())?;
+        start_environment_scan(&mut arduino)?;
 
         loop {
             if let Some(event) = arduino.poll()? {
-                if let ArduinoEvent::Telemetry(telemetry) = &event {
-                    state.apply(
+                let received_at = Instant::now();
+                match &event {
+                    ArduinoEvent::Telemetry(telemetry) => state.apply(
                         Observation::ArduinoTelemetry(telemetry.clone()),
-                        Instant::now(),
-                    );
+                        received_at,
+                    ),
+                    ArduinoEvent::SensorStatus(sensors) => state.apply(
+                        Observation::ArduinoSensors(SensorSnapshot {
+                            pir_ready: sensors.pir_ready(),
+                            pir_mask: sensors.pir_mask,
+                            proximity_mask: sensors.proximity_mask,
+                            local_safety_mask: sensors.local_safety_mask,
+                            ultrasonic_a_mm: sensors
+                                .ultrasonic_a_valid()
+                                .then_some(sensors.ultrasonic_a_mm),
+                            ultrasonic_b_mm: sensors
+                                .ultrasonic_b_valid()
+                                .then_some(sensors.ultrasonic_b_mm),
+                        }),
+                        received_at,
+                    ),
+                    _ => {}
                 }
-                telemetry_log.display(&event, Instant::now());
+                telemetry_log.display(&event, received_at);
             }
 
             let now = Instant::now();
@@ -68,9 +88,10 @@ impl Runtime {
                 let recovered_at = Instant::now();
                 state.apply(Observation::ArduinoTelemetry(safe_telemetry), recovered_at);
 
-                println!("Session recovered. Restarting simulation from a safe state.");
+                println!("Session recovered. Restarting PIR test from a safe state.");
                 let intent = behavior.start(&state, recovered_at);
                 apply_intent(&mut arduino, &safety, &state, intent, recovered_at)?;
+                start_environment_scan(&mut arduino)?;
                 supervisor.reset_after_recovery(recovered_at);
                 continue;
             }
@@ -84,6 +105,12 @@ impl Runtime {
             }
         }
     }
+}
+
+fn start_environment_scan(arduino: &mut ArduinoSession) -> io::Result<()> {
+    let sequence = arduino.start_environment_scan()?;
+    println!("Pi -> START_ENVIRONMENT_SCAN seq={sequence}");
+    Ok(())
 }
 
 fn apply_intent(
@@ -163,8 +190,8 @@ impl TelemetryLog {
             }
             ArduinoEvent::SensorStatus(sensors) => {
                 if self.should_display_sensors(sensors, now) {
-                    let pir_left = presence_name(sensors.pir_mask & (1 << 0) != 0);
-                    let pir_right = presence_name(sensors.pir_mask & (1 << 1) != 0);
+                    let pir_front = presence_name(sensors.pir_mask & (1 << 0) != 0);
+                    let pir_back = presence_name(sensors.pir_mask & (1 << 1) != 0);
                     let ground = if sensors.proximity_mask & (1 << 3) != 0 {
                         "ground"
                     } else {
@@ -176,11 +203,11 @@ impl TelemetryLog {
                         "STOP"
                     };
                     println!(
-                        "Sensors t={}ms pir_ready={} pir=(left:{},right:{}) bumpers=({},{},{}) cliff={} safety={} ultrasonic=(A:{},B:{})",
+                        "Sensors t={}ms pir_ready={} pir=(front:{},back:{}) bumpers=({},{},{}) cliff={} safety={} ultrasonic=(A:{},B:{})",
                         sensors.uptime_ms,
                         yes_no(sensors.pir_ready()),
-                        pir_left,
-                        pir_right,
+                        pir_front,
+                        pir_back,
                         detected(sensors.proximity_mask, 0),
                         detected(sensors.proximity_mask, 1),
                         detected(sensors.proximity_mask, 2),
@@ -201,6 +228,18 @@ impl TelemetryLog {
                     println!("Arduino virtual motors -> {}", status.mode_name());
                 }
             }
+            ArduinoEvent::EnvironmentScanSample(sample) => {
+                println!(
+                    "Environment scan angle={:03}deg distance={} | angle={:03}deg distance={}",
+                    sample.angle_a_deg,
+                    distance_text(sample.distance_a_mm, sample.sensor_a_valid()),
+                    sample.angle_b_deg,
+                    distance_text(sample.distance_b_mm, sample.sensor_b_valid()),
+                );
+            }
+            ArduinoEvent::EnvironmentScanStatus(status) => {
+                println!("Environment scan -> {}", status.state_name());
+            }
             ArduinoEvent::InvalidTelemetry => {
                 eprintln!("Arduino -> invalid TELEMETRY payload");
             }
@@ -209,6 +248,12 @@ impl TelemetryLog {
             }
             ArduinoEvent::InvalidMotionStatus => {
                 eprintln!("Arduino -> invalid MOTION_STATUS payload");
+            }
+            ArduinoEvent::InvalidEnvironmentScanSample => {
+                eprintln!("Arduino -> invalid ENVIRONMENT_SCAN_SAMPLE payload");
+            }
+            ArduinoEvent::InvalidEnvironmentScanStatus => {
+                eprintln!("Arduino -> invalid ENVIRONMENT_SCAN_STATUS payload");
             }
             ArduinoEvent::Error { sequence, payload } => {
                 eprintln!("Arduino -> ERROR seq={sequence} payload={payload:02x?}");

@@ -22,6 +22,9 @@ impl SafetyController {
     ) -> ActuatorCommand {
         if state.connection() != ConnectionHealth::Connected
             || self.requires_recovery(state, now)
+            || state
+                .telemetry()
+                .is_none_or(|telemetry| telemetry.state >= 2)
             || (intent.left_mm_s == 0 && intent.right_mm_s == 0)
         {
             ActuatorCommand::Stop
@@ -70,6 +73,36 @@ mod tests {
         );
         assert_eq!(
             safety.authorize(&state, intent, now + Duration::from_millis(1_500)),
+            ActuatorCommand::Stop
+        );
+    }
+
+    #[test]
+    fn stops_when_arduino_reports_local_safety() {
+        let now = Instant::now();
+        let mut state = RobotState::default();
+        state.apply(
+            Observation::ArduinoTelemetry(Telemetry {
+                uptime_ms: 0,
+                state: 3,
+                left_target_mm_s: 0,
+                right_target_mm_s: 0,
+                left_position_mm: 0,
+                right_position_mm: 0,
+                distance_mm: 500,
+                battery_mv: 0,
+                last_command_sequence: 1,
+            }),
+            now,
+        );
+        let safety = SafetyController::new(Duration::from_millis(1_500));
+
+        assert_eq!(
+            safety.authorize(
+                &state,
+                MotionIntent::new("PIR rotation test", -150, 150),
+                now
+            ),
             ActuatorCommand::Stop
         );
     }

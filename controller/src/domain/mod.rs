@@ -7,5 +7,5 @@ mod state;
 pub use command::ActuatorCommand;
 pub use health::ConnectionHealth;
 pub use intent::MotionIntent;
-pub use observation::{Observation, Telemetry};
+pub use observation::{Observation, SensorSnapshot, Telemetry};
 pub use state::RobotState;

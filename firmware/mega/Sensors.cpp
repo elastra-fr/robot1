@@ -14,6 +14,36 @@ bool deadlineReached(unsigned long now, unsigned long deadline) {
 
 }  // namespace
 
+void DebouncedDigitalInput::begin(
+  uint8_t pin,
+  uint8_t activeLevel,
+  unsigned long now
+) {
+  pin_ = pin;
+  activeLevel_ = activeLevel;
+  pinMode(pin_, INPUT);
+  rawActive_ = digitalRead(pin_) == activeLevel_;
+  stableActive_ = rawActive_;
+  rawChangedMs_ = now;
+}
+
+void DebouncedDigitalInput::update(unsigned long now) {
+  const bool rawActive = digitalRead(pin_) == activeLevel_;
+  if (rawActive != rawActive_) {
+    rawActive_ = rawActive;
+    rawChangedMs_ = now;
+  }
+
+  if (stableActive_ != rawActive_
+      && now - rawChangedMs_ >= PIR_DEBOUNCE_MS) {
+    stableActive_ = rawActive_;
+  }
+}
+
+bool DebouncedDigitalInput::active() const {
+  return stableActive_;
+}
+
 void UltrasonicSensor::begin(
   uint8_t triggerPin,
   uint8_t echoPin,
@@ -93,6 +123,10 @@ uint16_t UltrasonicSensor::distanceMm() const {
   return distanceMm_;
 }
 
+uint16_t UltrasonicSensor::measurementSequence() const {
+  return measurementSequence_;
+}
+
 void UltrasonicSensor::finish(
   unsigned long nowMs,
   bool valid,
@@ -100,6 +134,7 @@ void UltrasonicSensor::finish(
 ) {
   phase_ = Phase::Idle;
   nextMeasurementMs_ = nowMs + ULTRASONIC_INTERVAL_MS;
+  ++measurementSequence_;
   valid_ = valid;
   distanceMm_ = valid
     ? static_cast<uint16_t>((echoDurationUs * 343UL) / 2000UL)
@@ -109,8 +144,8 @@ void UltrasonicSensor::finish(
 void SensorManager::begin(unsigned long now) {
   startedMs_ = now;
 
-  pinMode(PIR_LEFT_PIN, INPUT);
-  pinMode(PIR_RIGHT_PIN, INPUT);
+  pirFront_.begin(PIR_FRONT_PIN, PIR_ACTIVE_LEVEL, now);
+  pirBack_.begin(PIR_BACK_PIN, PIR_ACTIVE_LEVEL, now);
   pinMode(BUMPER_1_PIN, INPUT_PULLUP);
   pinMode(BUMPER_2_PIN, INPUT_PULLUP);
   pinMode(BUMPER_3_PIN, INPUT_PULLUP);
@@ -131,10 +166,12 @@ void SensorManager::begin(unsigned long now) {
 }
 
 void SensorManager::update(unsigned long now) {
+  pirFront_.update(now);
+  pirBack_.update(now);
   pirReady_ = now - startedMs_ >= PIR_WARMUP_MS;
   if (pirReady()) {
-    pirMask_ = activeBit(PIR_LEFT_PIN, PIR_ACTIVE_LEVEL, 0)
-      | activeBit(PIR_RIGHT_PIN, PIR_ACTIVE_LEVEL, 1);
+    pirMask_ = (pirFront_.active() ? 1U << 0 : 0)
+      | (pirBack_.active() ? 1U << 1 : 0);
   } else {
     pirMask_ = 0;
   }
@@ -221,4 +258,20 @@ uint16_t SensorManager::ultrasonicAMm() const {
 
 uint16_t SensorManager::ultrasonicBMm() const {
   return ultrasonicB_.distanceMm();
+}
+
+bool SensorManager::ultrasonicAValid() const {
+  return ultrasonicA_.valid();
+}
+
+bool SensorManager::ultrasonicBValid() const {
+  return ultrasonicB_.valid();
+}
+
+uint16_t SensorManager::ultrasonicASequence() const {
+  return ultrasonicA_.measurementSequence();
+}
+
+uint16_t SensorManager::ultrasonicBSequence() const {
+  return ultrasonicB_.measurementSequence();
 }

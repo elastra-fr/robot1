@@ -2,6 +2,7 @@
 
 #include "FirmwareConfig.h"
 #include "FirmwareTypes.h"
+#include "EnvironmentScan.h"
 #include "Motion.h"
 #include "Safety.h"
 #include "Sensors.h"
@@ -13,6 +14,7 @@ MotionController motion;
 SensorManager sensors;
 ServoController servos;
 SafetyController safety;
+EnvironmentScanner environmentScanner;
 
 uint16_t lastCommandSequence = 0;
 unsigned long lastTelemetryMs = 0;
@@ -53,6 +55,15 @@ void handleCommand(const Command &command) {
       communication.sendMotionStatus(MotionMode::Stopped, SafetyReason::None);
       break;
 
+    case CommandType::StartEnvironmentScan:
+      if (!environmentScanner.start(now, servos)) {
+        communication.sendError(command.sequence, 3);
+        break;
+      }
+      communication.sendAck(command.sequence);
+      communication.sendEnvironmentScanStatus(1);
+      break;
+
     case CommandType::Unknown:
       communication.sendError(command.sequence, 2);
       break;
@@ -83,6 +94,7 @@ void setup() {
   sensors.begin(now);
   servos.begin(now);
   safety.begin(now);
+  environmentScanner.begin();
 }
 
 void loop() {
@@ -95,6 +107,21 @@ void loop() {
   motion.update(now);
   sensors.update(now);
   servos.update(now);
+
+  EnvironmentScanSample scanSample;
+  bool scanCompleted = false;
+  if (environmentScanner.update(
+        now,
+        sensors,
+        servos,
+        scanSample,
+        scanCompleted
+      )) {
+    communication.sendEnvironmentScanSample(scanSample);
+  }
+  if (scanCompleted) {
+    communication.sendEnvironmentScanStatus(2);
+  }
 
   const bool wasMoving = motion.isMoving();
   if (safety.update(

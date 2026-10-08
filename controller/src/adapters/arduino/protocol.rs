@@ -13,10 +13,13 @@ pub mod message_type {
     pub const HEARTBEAT: u8 = 0x03;
     pub const SET_MOTION: u8 = 0x10;
     pub const STOP: u8 = 0x11;
+    pub const START_ENVIRONMENT_SCAN: u8 = 0x12;
     pub const ACK: u8 = 0x20;
     pub const TELEMETRY: u8 = 0x30;
     pub const SENSOR_STATUS: u8 = 0x31;
     pub const MOTION_STATUS: u8 = 0x32;
+    pub const ENVIRONMENT_SCAN_SAMPLE: u8 = 0x33;
+    pub const ENVIRONMENT_SCAN_STATUS: u8 = 0x34;
     pub const ERROR: u8 = 0x7f;
 }
 
