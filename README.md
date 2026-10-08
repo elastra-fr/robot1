@@ -73,6 +73,26 @@ controller/src/
 └── main.rs       # Process entry point only
 ```
 
+### Arduino firmware structure
+
+The Mega firmware keeps the main sketch as a small, non-blocking orchestrator:
+
+```text
+firmware/mega/
+├── mega.ino                 # setup(), loop() and command dispatch
+├── SerialCommunication.*   # USB serial protocol and telemetry
+├── Motion.*                # motor targets and motion state
+├── Sensors.*               # sensor acquisition (currently simulated)
+├── Servos.*                # servo control boundary (not connected yet)
+├── Safety.*                # local watchdog and future safety interlocks
+├── FirmwareConfig.h        # shared timings and limits
+└── FirmwareTypes.h         # commands and telemetry data
+```
+
+Hardware modules expose `begin()` and non-blocking `update()` operations. This
+keeps serial processing and the local safety checks responsive while individual
+sensors and actuators are introduced.
+
 Timing-sensitive motor control, encoder feedback loops and the final watchdog
 remain on the Arduino. Camera and microphone recognition will run as isolated,
 on-demand workers on the Raspberry Pi. They will publish recognition results,
