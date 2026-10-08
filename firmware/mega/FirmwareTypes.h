@@ -17,6 +17,21 @@ struct Command {
   int16_t rightMmS;
 };
 
+enum class MotionMode : uint8_t {
+  Stopped = 0,
+  Forward = 1,
+  Backward = 2,
+  Left = 3,
+  Right = 4,
+  Mixed = 5,
+};
+
+enum class SafetyReason : uint8_t {
+  None = 0,
+  Watchdog = 1,
+  LocalHazard = 2,
+};
+
 struct TelemetryData {
   uint32_t uptimeMs;
   uint8_t state;
@@ -27,4 +42,14 @@ struct TelemetryData {
   uint16_t distanceMm;
   uint16_t batteryMv;
   uint16_t lastCommandSequence;
+};
+
+struct SensorData {
+  uint32_t uptimeMs;
+  uint8_t pirMask;
+  uint8_t proximityMask;
+  uint8_t localSafetyMask;
+  uint8_t flags;
+  uint16_t ultrasonicAMm;
+  uint16_t ultrasonicBMm;
 };

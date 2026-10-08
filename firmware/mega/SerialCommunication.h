@@ -16,6 +16,8 @@ class SerialCommunication {
   void sendAck(uint16_t sequence);
   void sendError(uint16_t sequence, uint8_t code);
   void sendTelemetry(const TelemetryData &telemetry);
+  void sendSensorStatus(const SensorData &sensors);
+  void sendMotionStatus(MotionMode mode, SafetyReason reason);
 
  private:
   static constexpr size_t HEADER_SIZE = 9;
@@ -29,7 +31,7 @@ class SerialCommunication {
   bool droppingOversizedFrame_ = false;
   bool sessionActive_ = false;
   uint32_t activeSession_ = 0;
-  uint16_t telemetrySequence_ = 1;
+  uint16_t eventSequence_ = 1;
 
   void processEncodedFrame(CommandHandler handler);
   void processFrame(const uint8_t *raw, size_t rawLength, CommandHandler handler);

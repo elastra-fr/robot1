@@ -16,6 +16,7 @@ SafetyController safety;
 
 uint16_t lastCommandSequence = 0;
 unsigned long lastTelemetryMs = 0;
+unsigned long lastSensorStatusMs = 0;
 
 void handleCommand(const Command &command) {
   const unsigned long now = millis();
@@ -25,6 +26,7 @@ void handleCommand(const Command &command) {
       motion.stop();
       safety.onContact(now);
       communication.sendHelloAck(command.sequence);
+      communication.sendMotionStatus(MotionMode::Stopped, SafetyReason::None);
       break;
 
     case CommandType::Heartbeat:
@@ -40,6 +42,7 @@ void handleCommand(const Command &command) {
       lastCommandSequence = command.sequence;
       safety.onContact(now);
       communication.sendAck(command.sequence);
+      communication.sendMotionStatus(motion.mode(), SafetyReason::None);
       break;
 
     case CommandType::Stop:
@@ -47,6 +50,7 @@ void handleCommand(const Command &command) {
       safety.onContact(now);
       motion.stop();
       communication.sendAck(command.sequence);
+      communication.sendMotionStatus(MotionMode::Stopped, SafetyReason::None);
       break;
 
     case CommandType::Unknown:
@@ -60,13 +64,13 @@ void sendCurrentTelemetry(unsigned long now) {
   telemetry.uptimeMs = now;
   telemetry.state = safety.watchdogTriggered()
     ? 2
-    : (motion.isMoving() ? 1 : 0);
+    : (safety.localHazardTriggered() ? 3 : (motion.isMoving() ? 1 : 0));
   telemetry.leftTargetMmS = motion.leftTargetMmS();
   telemetry.rightTargetMmS = motion.rightTargetMmS();
   telemetry.leftPositionMm = motion.leftPositionMm();
   telemetry.rightPositionMm = motion.rightPositionMm();
-  telemetry.distanceMm = sensors.distanceMm();
-  telemetry.batteryMv = sensors.batteryMv();
+  telemetry.distanceMm = sensors.ultrasonicAMm();
+  telemetry.batteryMv = 0;
   telemetry.lastCommandSequence = lastCommandSequence;
   communication.sendTelemetry(telemetry);
 }
@@ -92,14 +96,28 @@ void loop() {
   sensors.update(now);
   servos.update(now);
 
-  if (safety.update(now, communication.sessionActive())) {
+  const bool wasMoving = motion.isMoving();
+  if (safety.update(
+        now,
+        communication.sessionActive(),
+        sensors.localHazardDetected()
+      )) {
     motion.stop();
     servos.stopAll();
+    if (wasMoving) {
+      communication.sendMotionStatus(MotionMode::Stopped, safety.reason());
+    }
   }
 
   if (communication.sessionActive()
       && now - lastTelemetryMs >= TELEMETRY_INTERVAL_MS) {
     sendCurrentTelemetry(now);
     lastTelemetryMs = now;
+  }
+
+  if (communication.sessionActive()
+      && now - lastSensorStatusMs >= SENSOR_STATUS_INTERVAL_MS) {
+    communication.sendSensorStatus(sensors.snapshot(now));
+    lastSensorStatusMs = now;
   }
 }

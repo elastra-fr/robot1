@@ -13,6 +13,8 @@ constexpr uint8_t MSG_SET_MOTION = 0x10;
 constexpr uint8_t MSG_STOP = 0x11;
 constexpr uint8_t MSG_ACK = 0x20;
 constexpr uint8_t MSG_TELEMETRY = 0x30;
+constexpr uint8_t MSG_SENSOR_STATUS = 0x31;
+constexpr uint8_t MSG_MOTION_STATUS = 0x32;
 constexpr uint8_t MSG_ERROR = 0x7f;
 
 uint16_t crc16(const uint8_t *bytes, size_t length) {
@@ -218,7 +220,30 @@ void SerialCommunication::sendTelemetry(const TelemetryData &telemetry) {
   writeU16(&payload[19], telemetry.batteryMv);
   writeU16(&payload[21], telemetry.lastCommandSequence);
 
-  sendFrame(MSG_TELEMETRY, telemetrySequence_++, payload, sizeof(payload));
+  sendFrame(MSG_TELEMETRY, eventSequence_++, payload, sizeof(payload));
+}
+
+void SerialCommunication::sendSensorStatus(const SensorData &sensors) {
+  uint8_t payload[12];
+  writeU32(&payload[0], sensors.uptimeMs);
+  payload[4] = sensors.pirMask;
+  payload[5] = sensors.proximityMask;
+  payload[6] = sensors.localSafetyMask;
+  payload[7] = sensors.flags;
+  writeU16(&payload[8], sensors.ultrasonicAMm);
+  writeU16(&payload[10], sensors.ultrasonicBMm);
+  sendFrame(MSG_SENSOR_STATUS, eventSequence_++, payload, sizeof(payload));
+}
+
+void SerialCommunication::sendMotionStatus(
+  MotionMode mode,
+  SafetyReason reason
+) {
+  const uint8_t payload[] = {
+    static_cast<uint8_t>(mode),
+    static_cast<uint8_t>(reason),
+  };
+  sendFrame(MSG_MOTION_STATUS, eventSequence_++, payload, sizeof(payload));
 }
 
 void SerialCommunication::processEncodedFrame(CommandHandler handler) {

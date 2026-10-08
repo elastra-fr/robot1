@@ -15,6 +15,8 @@ pub mod message_type {
     pub const STOP: u8 = 0x11;
     pub const ACK: u8 = 0x20;
     pub const TELEMETRY: u8 = 0x30;
+    pub const SENSOR_STATUS: u8 = 0x31;
+    pub const MOTION_STATUS: u8 = 0x32;
     pub const ERROR: u8 = 0x7f;
 }
 

@@ -8,7 +8,7 @@ struct MotionPhase {
     duration: Duration,
 }
 
-const MOTION_SCRIPT: [MotionPhase; 4] = [
+const MOTION_SCRIPT: [MotionPhase; 5] = [
     MotionPhase {
         intent: MotionIntent::new("forward", 200, 200),
         duration: Duration::from_secs(3),
@@ -20,6 +20,10 @@ const MOTION_SCRIPT: [MotionPhase; 4] = [
     MotionPhase {
         intent: MotionIntent::new("reverse", -150, -150),
         duration: Duration::from_secs(3),
+    },
+    MotionPhase {
+        intent: MotionIntent::new("rotate left", -150, 150),
+        duration: Duration::from_secs(2),
     },
     MotionPhase {
         intent: MotionIntent::new("stop", 0, 0),

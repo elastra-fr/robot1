@@ -22,6 +22,7 @@ impl Telemetry {
             0 => "idle",
             1 => "moving",
             2 => "watchdog",
+            3 => "local-safety-stop",
             _ => "unknown",
         }
     }

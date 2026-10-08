@@ -93,6 +93,36 @@ Hardware modules expose `begin()` and non-blocking `update()` operations. This
 keeps serial processing and the local safety checks responsive while individual
 sensors and actuators are introduced.
 
+### Sensor bring-up wiring
+
+The initial Mega pin assignment is centralized in `FirmwareConfig.h`:
+
+| Mega pin | Connection | Current role |
+| --- | --- | --- |
+| 22 | PIR left `OUT` | Human presence |
+| 23 | PIR right `OUT` | Human presence |
+| 24 | 10 cm sensor 1 `OUT` | Local bumper |
+| 25 | 10 cm sensor 2 `OUT` | Local bumper |
+| 26 | 10 cm sensor 3 `OUT` | Local bumper |
+| 27 | 10 cm sensor 4 `OUT` | Ground/cliff detector |
+| 28 / 29 | Ultrasonic A `TRIG` / `ECHO` | Distance A |
+| 30 / 31 | Ultrasonic B `TRIG` / `ECHO` | Opposite distance B |
+
+All sensor grounds must be connected to Mega ground. The selected Pololu/Sharp
+10 cm modules use an active-low output. Sensors 1 to 3 stop virtual motion when
+they detect an object; sensor 4 is fail-safe and stops motion when it no longer
+detects the ground. A disconnected sensor 4 therefore prevents movement. The
+manufacturer also recommends considering a capacitor of at least 10 uF close
+to each older GP2Y0D810 carrier because the emitter draws short current pulses.
+
+Pololu reference: https://www.pololu.com/product/1134
+
+The two ultrasonic sensors are triggered alternately by a non-blocking state
+machine to reduce cross-talk and keep serial communication responsive. PIR
+presence is ignored during the first 60 seconds after boot while the modules
+stabilize. Motor actions remain virtual and are displayed by the Pi as `MOVE
+FORWARD`, `MOVE BACKWARD`, `TURN LEFT`, `TURN RIGHT` or `STOPPED`.
+
 Timing-sensitive motor control, encoder feedback loops and the final watchdog
 remain on the Arduino. Camera and microphone recognition will run as isolated,
 on-demand workers on the Raspberry Pi. They will publish recognition results,
@@ -115,6 +145,8 @@ Arduino -> HELLO_ACK
 Pi      -> SET_MOTION
 Arduino -> ACK
 Arduino -> TELEMETRY (10 Hz)
+Arduino -> SENSOR_STATUS (4 Hz)
+Arduino -> MOTION_STATUS (on change)
 Pi      -> HEARTBEAT (4 Hz)
 ```
 
@@ -122,10 +154,11 @@ Protocol v1 uses binary COBS framing, session identifiers, sequence numbers and
 CRC-16 validation. Its complete specification is in
 [`protocol/serial-v1.md`](protocol/serial-v1.md).
 
-The current firmware is a safe simulation: it does not drive motor outputs. It
-simulates differential motion, encoder positions, a distance sensor and battery
-voltage. The controller cycles through forward motion, rotation, reverse motion
-and stop while displaying telemetry continuously.
+The current firmware does not drive motor outputs. It keeps differential motion
+and encoder positions virtual while reading the PIR, 10 cm and ultrasonic
+sensors for hardware bring-up. The controller cycles through forward motion,
+rotation, reverse motion and stop while displaying virtual motor actions and
+real sensor status continuously.
 
 ## Development workflow
 

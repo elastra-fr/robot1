@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 
+#include "FirmwareTypes.h"
+
 class MotionController {
  public:
   void begin(unsigned long now);
@@ -10,6 +12,7 @@ class MotionController {
   void update(unsigned long now);
 
   bool isMoving() const;
+  MotionMode mode() const;
   int16_t leftTargetMmS() const;
   int16_t rightTargetMmS() const;
   int32_t leftPositionMm() const;

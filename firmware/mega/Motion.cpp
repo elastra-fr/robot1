@@ -50,6 +50,25 @@ bool MotionController::isMoving() const {
   return leftTargetMmS_ != 0 || rightTargetMmS_ != 0;
 }
 
+MotionMode MotionController::mode() const {
+  if (!isMoving()) {
+    return MotionMode::Stopped;
+  }
+  if (leftTargetMmS_ >= 0 && rightTargetMmS_ >= 0) {
+    return MotionMode::Forward;
+  }
+  if (leftTargetMmS_ <= 0 && rightTargetMmS_ <= 0) {
+    return MotionMode::Backward;
+  }
+  if (leftTargetMmS_ < 0 && rightTargetMmS_ > 0) {
+    return MotionMode::Left;
+  }
+  if (leftTargetMmS_ > 0 && rightTargetMmS_ < 0) {
+    return MotionMode::Right;
+  }
+  return MotionMode::Mixed;
+}
+
 int16_t MotionController::leftTargetMmS() const {
   return leftTargetMmS_;
 }

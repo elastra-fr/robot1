@@ -1,5 +1,5 @@
 use super::supervisor::ConnectionSupervisor;
-use crate::adapters::arduino::{ArduinoEvent, ArduinoSession};
+use crate::adapters::arduino::{ArduinoEvent, ArduinoSession, SensorStatus};
 use crate::behaviors::SimulationBehavior;
 use crate::config::Config;
 use crate::control::{Behavior, SafetyController};
@@ -119,6 +119,11 @@ struct TelemetryLog {
     last_display: Option<Instant>,
     last_state: Option<u8>,
     last_command_sequence: Option<u16>,
+    last_sensor_display: Option<Instant>,
+    last_pir_mask: Option<u8>,
+    last_proximity_mask: Option<u8>,
+    last_local_safety_mask: Option<u8>,
+    last_sensor_flags: Option<u8>,
 }
 
 impl TelemetryLog {
@@ -128,6 +133,11 @@ impl TelemetryLog {
             last_display: None,
             last_state: None,
             last_command_sequence: None,
+            last_sensor_display: None,
+            last_pir_mask: None,
+            last_proximity_mask: None,
+            last_local_safety_mask: None,
+            last_sensor_flags: None,
         }
     }
 
@@ -151,8 +161,54 @@ impl TelemetryLog {
                     );
                 }
             }
+            ArduinoEvent::SensorStatus(sensors) => {
+                if self.should_display_sensors(sensors, now) {
+                    let pir_left = presence_name(sensors.pir_mask & (1 << 0) != 0);
+                    let pir_right = presence_name(sensors.pir_mask & (1 << 1) != 0);
+                    let ground = if sensors.proximity_mask & (1 << 3) != 0 {
+                        "ground"
+                    } else {
+                        "VOID"
+                    };
+                    let safety = if sensors.local_safety_mask == 0 {
+                        "clear"
+                    } else {
+                        "STOP"
+                    };
+                    println!(
+                        "Sensors t={}ms pir_ready={} pir=(left:{},right:{}) bumpers=({},{},{}) cliff={} safety={} ultrasonic=(A:{},B:{})",
+                        sensors.uptime_ms,
+                        yes_no(sensors.pir_ready()),
+                        pir_left,
+                        pir_right,
+                        detected(sensors.proximity_mask, 0),
+                        detected(sensors.proximity_mask, 1),
+                        detected(sensors.proximity_mask, 2),
+                        ground,
+                        safety,
+                        distance_text(sensors.ultrasonic_a_mm, sensors.ultrasonic_a_valid()),
+                        distance_text(sensors.ultrasonic_b_mm, sensors.ultrasonic_b_valid()),
+                    );
+                }
+            }
+            ArduinoEvent::MotionStatus(status) => {
+                if let Some(reason) = status.safety_reason_name() {
+                    println!(
+                        "Arduino virtual motors -> {} (safety: {reason})",
+                        status.mode_name()
+                    );
+                } else {
+                    println!("Arduino virtual motors -> {}", status.mode_name());
+                }
+            }
             ArduinoEvent::InvalidTelemetry => {
                 eprintln!("Arduino -> invalid TELEMETRY payload");
+            }
+            ArduinoEvent::InvalidSensorStatus => {
+                eprintln!("Arduino -> invalid SENSOR_STATUS payload");
+            }
+            ArduinoEvent::InvalidMotionStatus => {
+                eprintln!("Arduino -> invalid MOTION_STATUS payload");
             }
             ArduinoEvent::Error { sequence, payload } => {
                 eprintln!("Arduino -> ERROR seq={sequence} payload={payload:02x?}");
@@ -179,6 +235,52 @@ impl TelemetryLog {
         } else {
             false
         }
+    }
+
+    fn should_display_sensors(&mut self, sensors: &SensorStatus, now: Instant) -> bool {
+        let changed = self.last_pir_mask != Some(sensors.pir_mask)
+            || self.last_proximity_mask != Some(sensors.proximity_mask)
+            || self.last_local_safety_mask != Some(sensors.local_safety_mask)
+            || self.last_sensor_flags != Some(sensors.flags);
+        let periodic = self
+            .last_sensor_display
+            .is_none_or(|last_display| now.duration_since(last_display) >= self.interval);
+
+        self.last_pir_mask = Some(sensors.pir_mask);
+        self.last_proximity_mask = Some(sensors.proximity_mask);
+        self.last_local_safety_mask = Some(sensors.local_safety_mask);
+        self.last_sensor_flags = Some(sensors.flags);
+
+        if changed || periodic {
+            self.last_sensor_display = Some(now);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn presence_name(detected: bool) -> &'static str {
+    if detected { "PRESENCE" } else { "clear" }
+}
+
+fn detected(mask: u8, bit: u8) -> &'static str {
+    if mask & (1 << bit) != 0 {
+        "BLOCKED"
+    } else {
+        "clear"
+    }
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
+}
+
+fn distance_text(distance_mm: u16, valid: bool) -> String {
+    if valid {
+        format!("{distance_mm}mm")
+    } else {
+        "invalid".to_string()
     }
 }
 

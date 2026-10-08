@@ -54,6 +54,8 @@ before activating the new session.
 | `0x11` | `STOP` | Pi → Arduino | Empty |
 | `0x20` | `ACK` | Arduino → Pi | Empty; sequence matches the command |
 | `0x30` | `TELEMETRY` | Arduino → Pi | Telemetry structure below |
+| `0x31` | `SENSOR_STATUS` | Arduino → Pi | Real sensor status structure below |
+| `0x32` | `MOTION_STATUS` | Arduino → Pi | Virtual motion and safety reason |
 | `0x7f` | `ERROR` | Arduino → Pi | One-byte error code |
 
 `SET_MOTION` is absolute and idempotent: a repeated frame sets the same target
@@ -65,13 +67,13 @@ instead of accumulating motion. The simulated firmware accepts speeds between
 | Offset | Size | Type | Field |
 | --- | --- | --- | --- |
 | 0 | 4 | `u32` | Arduino uptime in milliseconds |
-| 4 | 1 | `u8` | State: `0=idle`, `1=moving`, `2=watchdog stop` |
+| 4 | 1 | `u8` | State: `0=idle`, `1=moving`, `2=watchdog stop`, `3=local safety stop` |
 | 5 | 2 | `i16` | Left target speed in mm/s |
 | 7 | 2 | `i16` | Right target speed in mm/s |
 | 9 | 4 | `i32` | Simulated left position in mm |
 | 13 | 4 | `i32` | Simulated right position in mm |
-| 17 | 2 | `u16` | Simulated distance in mm |
-| 19 | 2 | `u16` | Simulated battery voltage in mV |
+| 17 | 2 | `u16` | Ultrasonic A distance in mm, or `0xffff` if invalid |
+| 19 | 2 | `u16` | Battery voltage in mV; zero until a real monitor is connected |
 | 21 | 2 | `u16` | Last applied command sequence |
 
 Telemetry is currently published at 10 Hz. It is not acknowledged: a stale
@@ -81,9 +83,38 @@ silent startup delay after closing and reopening the serial port, creates a new
 session and performs a new handshake. It then sends `STOP` and requires both the
 matching `ACK` and an idle telemetry sample before restarting the simulation.
 
+## Sensor status payload
+
+| Offset | Size | Type | Field |
+| --- | --- | --- | --- |
+| 0 | 4 | `u32` | Arduino uptime in milliseconds |
+| 4 | 1 | `u8` | PIR presence bits: left=`bit 0`, right=`bit 1` |
+| 5 | 1 | `u8` | 10 cm detection bits: bumpers=`bits 0..2`, ground=`bit 3` |
+| 6 | 1 | `u8` | Local hazards: bumpers=`bits 0..2`, missing ground=`bit 3` |
+| 7 | 1 | `u8` | Ready/valid flags: PIR=`bit 0`, ultrasonic A=`bit 1`, B=`bit 2` |
+| 8 | 2 | `u16` | Ultrasonic A distance in mm, or `0xffff` |
+| 10 | 2 | `u16` | Ultrasonic B distance in mm, or `0xffff` |
+
+`SENSOR_STATUS` is published every 250 ms. The Pi prints changes immediately
+and otherwise limits the development display to about one line per second.
+
+## Motion status payload
+
+| Offset | Size | Type | Field |
+| --- | --- | --- | --- |
+| 0 | 1 | `u8` | `0=stopped`, `1=forward`, `2=backward`, `3=left`, `4=right`, `5=mixed` |
+| 1 | 1 | `u8` | Stop reason: `0=none`, `1=watchdog`, `2=local sensor` |
+
+The motion remains virtual during sensor bring-up. This status provides visible
+Arduino-side confirmation without writing unframed text onto the binary serial
+link.
+
 ## Safety behavior
 
 The controller sends a heartbeat every 250 ms. If the Arduino receives no valid
 heartbeat or motion command for 1000 ms, it sets both simulated motor targets to
-zero and publishes state `2`. This watchdog is local to the firmware and does
-not depend on Linux scheduling after the timeout expires.
+zero and publishes state `2`. Any of the three bumper sensors detecting an
+object also stops motion locally. The fourth 10 cm sensor looks at the ground:
+failure to detect the ground is treated as a cliff and publishes state `3`.
+These protections are local to the firmware and do not depend on Linux
+scheduling.
