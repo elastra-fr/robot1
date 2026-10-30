@@ -26,7 +26,7 @@ impl SerialLink {
             .open()?;
 
         println!(
-            "Waiting {}ms for the Arduino bootloader and firmware...",
+            "[SERIAL] waiting {}ms for Arduino startup",
             boot_delay.as_millis()
         );
         std::thread::sleep(boot_delay);
@@ -79,11 +79,11 @@ impl SerialLink {
                         }
                         Some(Ok(frame)) => {
                             eprintln!(
-                                "Ignoring stale session {:08x} (current {:08x})",
+                                "[WARN] ignoring stale session {:08x} (current {:08x})",
                                 frame.session, self.session
                             );
                         }
-                        Some(Err(error)) => eprintln!("Discarding invalid serial frame: {error}"),
+                        Some(Err(error)) => eprintln!("[WARN] invalid serial frame: {error}"),
                         None => {}
                     }
                 }

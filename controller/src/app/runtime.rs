@@ -1,7 +1,7 @@
 use super::supervisor::ConnectionSupervisor;
 use crate::adapters::arduino::{ArduinoEvent, ArduinoSession, SensorStatus};
 use crate::behaviors::PresenceTestBehavior;
-use crate::config::Config;
+use crate::config::{Config, LogMode};
 use crate::control::{Behavior, SafetyController};
 use crate::domain::{
     ActuatorCommand, MotionIntent, Observation, RobotState, SensorSnapshot, Telemetry,
@@ -20,7 +20,8 @@ impl Runtime {
     }
 
     pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut telemetry_log = TelemetryLog::new(self.config.telemetry_log_interval);
+        let mut telemetry_log =
+            TelemetryLog::new(self.config.telemetry_log_interval, self.config.log_mode);
         let (mut arduino, initial_telemetry) = ArduinoSession::connect(
             self.config.arduino_port,
             self.config.boot_delay,
@@ -40,7 +41,7 @@ impl Runtime {
             ConnectionSupervisor::new(self.config.heartbeat_interval, Instant::now());
         let mut behavior = PresenceTestBehavior::default();
 
-        println!("Protocol synchronized. Starting PIR rotation test (Ctrl+C to stop).");
+        println!("[TEST] PIR rotation test ready (Ctrl+C to stop)");
         let intent = behavior.start(&state, Instant::now());
         apply_intent(&mut arduino, &safety, &state, intent, Instant::now())?;
         start_environment_scan(&mut arduino)?;
@@ -76,11 +77,12 @@ impl Runtime {
             let now = Instant::now();
             if safety.requires_recovery(&state, now) {
                 eprintln!(
-                    "No valid telemetry for {}ms; recovering Arduino session...",
+                    "[RECOVERY] no valid telemetry for {}ms; reconnecting Arduino",
                     self.config.telemetry_timeout.as_millis()
                 );
                 state.mark_recovering();
-                telemetry_log = TelemetryLog::new(self.config.telemetry_log_interval);
+                telemetry_log =
+                    TelemetryLog::new(self.config.telemetry_log_interval, self.config.log_mode);
 
                 let (recovered_arduino, safe_telemetry) =
                     arduino.recover(&mut |event| telemetry_log.display(event, Instant::now()))?;
@@ -88,7 +90,7 @@ impl Runtime {
                 let recovered_at = Instant::now();
                 state.apply(Observation::ArduinoTelemetry(safe_telemetry), recovered_at);
 
-                println!("Session recovered. Restarting PIR test from a safe state.");
+                println!("[TEST] session recovered; restarting from a safe state");
                 let intent = behavior.start(&state, recovered_at);
                 apply_intent(&mut arduino, &safety, &state, intent, recovered_at)?;
                 start_environment_scan(&mut arduino)?;
@@ -109,7 +111,7 @@ impl Runtime {
 
 fn start_environment_scan(arduino: &mut ArduinoSession) -> io::Result<()> {
     let sequence = arduino.start_environment_scan()?;
-    println!("Pi -> START_ENVIRONMENT_SCAN seq={sequence}");
+    println!("[TX] START_ENVIRONMENT_SCAN seq={sequence}");
     Ok(())
 }
 
@@ -125,14 +127,14 @@ fn apply_intent(
 
     match command {
         ActuatorCommand::Stop => {
-            println!("Pi -> STOP seq={sequence} phase={}", intent.name);
+            println!("[TX] STOP seq={sequence} test=\"{}\"", intent.name);
         }
         ActuatorCommand::SetWheelSpeeds {
             left_mm_s,
             right_mm_s,
         } => {
             println!(
-                "Pi -> SET_MOTION seq={sequence} phase={} left={left_mm_s}mm/s right={right_mm_s}mm/s",
+                "[TX] SET_MOTION seq={sequence} test=\"{}\" wheels=({left_mm_s},{right_mm_s})mm/s",
                 intent.name
             );
         }
@@ -142,6 +144,7 @@ fn apply_intent(
 }
 
 struct TelemetryLog {
+    mode: LogMode,
     interval: Duration,
     last_display: Option<Instant>,
     last_state: Option<u8>,
@@ -151,11 +154,22 @@ struct TelemetryLog {
     last_proximity_mask: Option<u8>,
     last_local_safety_mask: Option<u8>,
     last_sensor_flags: Option<u8>,
+    scan_measurements: usize,
+    scan_valid_measurements: usize,
+    scan_nearest: Option<ScanNearest>,
+}
+
+#[derive(Clone, Copy)]
+struct ScanNearest {
+    sensor: char,
+    angle_deg: u16,
+    distance_mm: u16,
 }
 
 impl TelemetryLog {
-    fn new(interval: Duration) -> Self {
+    fn new(interval: Duration, mode: LogMode) -> Self {
         Self {
+            mode,
             interval,
             last_display: None,
             last_state: None,
@@ -165,18 +179,20 @@ impl TelemetryLog {
             last_proximity_mask: None,
             last_local_safety_mask: None,
             last_sensor_flags: None,
+            scan_measurements: 0,
+            scan_valid_measurements: 0,
+            scan_nearest: None,
         }
     }
 
     fn display(&mut self, event: &ArduinoEvent, now: Instant) {
         match event {
-            ArduinoEvent::Ack { sequence } => println!("Arduino -> ACK seq={sequence}"),
+            ArduinoEvent::Ack { sequence } => println!("[RX] ACK seq={sequence}"),
             ArduinoEvent::Telemetry(telemetry) => {
                 if self.should_display(telemetry, now) {
                     println!(
-                        "Telemetry t={}ms state={}({}) target=({},{})mm/s position=({},{})mm distance={}mm battery={}mV last_cmd={}",
+                        "[STATE] t={}ms mode={} target=({},{})mm/s position=({},{})mm distance={}mm battery={}mV last_cmd={}",
                         telemetry.uptime_ms,
-                        telemetry.state,
                         telemetry.state_name(),
                         telemetry.left_target_mm_s,
                         telemetry.right_target_mm_s,
@@ -203,9 +219,13 @@ impl TelemetryLog {
                         "STOP"
                     };
                     println!(
-                        "Sensors t={}ms pir_ready={} pir=(front:{},back:{}) bumpers=({},{},{}) cliff={} safety={} ultrasonic=(A:{},B:{})",
+                        "[SENSORS] t={}ms PIR={} front={} back={} | bumpers={}/{}/{} cliff={} safety={}{}",
                         sensors.uptime_ms,
-                        yes_no(sensors.pir_ready()),
+                        if sensors.pir_ready() {
+                            "READY"
+                        } else {
+                            "warming-up"
+                        },
                         pir_front,
                         pir_back,
                         detected(sensors.proximity_mask, 0),
@@ -213,53 +233,57 @@ impl TelemetryLog {
                         detected(sensors.proximity_mask, 2),
                         ground,
                         safety,
-                        distance_text(sensors.ultrasonic_a_mm, sensors.ultrasonic_a_valid()),
-                        distance_text(sensors.ultrasonic_b_mm, sensors.ultrasonic_b_valid()),
+                        self.ultrasonic_suffix(sensors),
                     );
                 }
             }
             ArduinoEvent::MotionStatus(status) => {
                 if let Some(reason) = status.safety_reason_name() {
-                    println!(
-                        "Arduino virtual motors -> {} (safety: {reason})",
-                        status.mode_name()
-                    );
+                    println!("[MOTION] {} (safety: {reason})", status.mode_name());
                 } else {
-                    println!("Arduino virtual motors -> {}", status.mode_name());
+                    println!("[MOTION] {}", status.mode_name());
                 }
             }
             ArduinoEvent::EnvironmentScanSample(sample) => {
-                println!(
-                    "Environment scan angle={:03}deg distance={} | angle={:03}deg distance={}",
-                    sample.angle_a_deg,
-                    distance_text(sample.distance_a_mm, sample.sensor_a_valid()),
-                    sample.angle_b_deg,
-                    distance_text(sample.distance_b_mm, sample.sensor_b_valid()),
-                );
+                self.record_scan_sample(sample);
+                if self.mode == LogMode::Verbose {
+                    println!(
+                        "[SCAN] A {:03}deg={} | B {:03}deg={}",
+                        sample.angle_a_deg,
+                        distance_text(sample.distance_a_mm, sample.sensor_a_valid()),
+                        sample.angle_b_deg,
+                        distance_text(sample.distance_b_mm, sample.sensor_b_valid()),
+                    );
+                }
             }
-            ArduinoEvent::EnvironmentScanStatus(status) => {
-                println!("Environment scan -> {}", status.state_name());
-            }
+            ArduinoEvent::EnvironmentScanStatus(status) => match status.state {
+                1 => {
+                    self.reset_scan();
+                    println!("[SCAN] started");
+                }
+                2 => self.display_scan_summary(),
+                _ => println!("[SCAN] status={}", status.state_name()),
+            },
             ArduinoEvent::InvalidTelemetry => {
-                eprintln!("Arduino -> invalid TELEMETRY payload");
+                eprintln!("[ERROR] invalid TELEMETRY payload");
             }
             ArduinoEvent::InvalidSensorStatus => {
-                eprintln!("Arduino -> invalid SENSOR_STATUS payload");
+                eprintln!("[ERROR] invalid SENSOR_STATUS payload");
             }
             ArduinoEvent::InvalidMotionStatus => {
-                eprintln!("Arduino -> invalid MOTION_STATUS payload");
+                eprintln!("[ERROR] invalid MOTION_STATUS payload");
             }
             ArduinoEvent::InvalidEnvironmentScanSample => {
-                eprintln!("Arduino -> invalid ENVIRONMENT_SCAN_SAMPLE payload");
+                eprintln!("[ERROR] invalid ENVIRONMENT_SCAN_SAMPLE payload");
             }
             ArduinoEvent::InvalidEnvironmentScanStatus => {
-                eprintln!("Arduino -> invalid ENVIRONMENT_SCAN_STATUS payload");
+                eprintln!("[ERROR] invalid ENVIRONMENT_SCAN_STATUS payload");
             }
             ArduinoEvent::Error { sequence, payload } => {
-                eprintln!("Arduino -> ERROR seq={sequence} payload={payload:02x?}");
+                eprintln!("[ERROR] Arduino seq={sequence} payload={payload:02x?}");
             }
             ArduinoEvent::Unexpected { message_type } => {
-                eprintln!("Arduino -> unexpected message type 0x{message_type:02x}");
+                eprintln!("[ERROR] unexpected message type 0x{message_type:02x}");
             }
         }
     }
@@ -267,9 +291,10 @@ impl TelemetryLog {
     fn should_display(&mut self, telemetry: &Telemetry, now: Instant) -> bool {
         let changed = self.last_state != Some(telemetry.state)
             || self.last_command_sequence != Some(telemetry.last_command_sequence);
-        let periodic = self
-            .last_display
-            .is_none_or(|last_display| now.duration_since(last_display) >= self.interval);
+        let periodic = self.mode == LogMode::Verbose
+            && self
+                .last_display
+                .is_none_or(|last_display| now.duration_since(last_display) >= self.interval);
 
         self.last_state = Some(telemetry.state);
         self.last_command_sequence = Some(telemetry.last_command_sequence);
@@ -283,18 +308,20 @@ impl TelemetryLog {
     }
 
     fn should_display_sensors(&mut self, sensors: &SensorStatus, now: Instant) -> bool {
+        let meaningful_flags = sensors.flags & 0x01;
         let changed = self.last_pir_mask != Some(sensors.pir_mask)
             || self.last_proximity_mask != Some(sensors.proximity_mask)
             || self.last_local_safety_mask != Some(sensors.local_safety_mask)
-            || self.last_sensor_flags != Some(sensors.flags);
-        let periodic = self
-            .last_sensor_display
-            .is_none_or(|last_display| now.duration_since(last_display) >= self.interval);
+            || self.last_sensor_flags != Some(meaningful_flags);
+        let periodic = self.mode == LogMode::Verbose
+            && self
+                .last_sensor_display
+                .is_none_or(|last_display| now.duration_since(last_display) >= self.interval);
 
         self.last_pir_mask = Some(sensors.pir_mask);
         self.last_proximity_mask = Some(sensors.proximity_mask);
         self.last_local_safety_mask = Some(sensors.local_safety_mask);
-        self.last_sensor_flags = Some(sensors.flags);
+        self.last_sensor_flags = Some(meaningful_flags);
 
         if changed || periodic {
             self.last_sensor_display = Some(now);
@@ -302,6 +329,85 @@ impl TelemetryLog {
         } else {
             false
         }
+    }
+
+    fn ultrasonic_suffix(&self, sensors: &SensorStatus) -> String {
+        if self.mode == LogMode::Verbose {
+            format!(
+                " | ultrasonic=A:{} B:{}",
+                distance_text(sensors.ultrasonic_a_mm, sensors.ultrasonic_a_valid()),
+                distance_text(sensors.ultrasonic_b_mm, sensors.ultrasonic_b_valid()),
+            )
+        } else {
+            String::new()
+        }
+    }
+
+    fn reset_scan(&mut self) {
+        self.scan_measurements = 0;
+        self.scan_valid_measurements = 0;
+        self.scan_nearest = None;
+    }
+
+    fn record_scan_sample(&mut self, sample: &crate::adapters::arduino::EnvironmentScanSample) {
+        self.record_scan_measurement(
+            'A',
+            sample.angle_a_deg,
+            sample.distance_a_mm,
+            sample.sensor_a_valid(),
+        );
+        self.record_scan_measurement(
+            'B',
+            sample.angle_b_deg,
+            sample.distance_b_mm,
+            sample.sensor_b_valid(),
+        );
+    }
+
+    fn record_scan_measurement(
+        &mut self,
+        sensor: char,
+        angle_deg: u16,
+        distance_mm: u16,
+        valid: bool,
+    ) {
+        self.scan_measurements += 1;
+        if !valid {
+            return;
+        }
+
+        self.scan_valid_measurements += 1;
+        if self
+            .scan_nearest
+            .is_none_or(|nearest| distance_mm < nearest.distance_mm)
+        {
+            self.scan_nearest = Some(ScanNearest {
+                sensor,
+                angle_deg,
+                distance_mm,
+            });
+        }
+    }
+
+    fn display_scan_summary(&self) {
+        let quality = if self.scan_measurements == 0 {
+            "no samples".to_string()
+        } else {
+            format!(
+                "{}/{} valid",
+                self.scan_valid_measurements, self.scan_measurements
+            )
+        };
+        let nearest = self.scan_nearest.map_or_else(
+            || "nearest=none".to_string(),
+            |nearest| {
+                format!(
+                    "nearest={}mm (sensor {}, {:03}deg)",
+                    nearest.distance_mm, nearest.sensor, nearest.angle_deg
+                )
+            },
+        );
+        println!("[SCAN] complete: {quality}, {nearest}");
     }
 }
 
@@ -317,10 +423,6 @@ fn detected(mask: u8, bit: u8) -> &'static str {
     }
 }
 
-fn yes_no(value: bool) -> &'static str {
-    if value { "yes" } else { "no" }
-}
-
 fn distance_text(distance_mm: u16, valid: bool) -> String {
     if valid {
         format!("{distance_mm}mm")
@@ -332,13 +434,15 @@ fn distance_text(distance_mm: u16, valid: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::TelemetryLog;
+    use crate::adapters::arduino::SensorStatus;
+    use crate::config::LogMode;
     use crate::domain::Telemetry;
     use std::time::{Duration, Instant};
 
     #[test]
     fn limits_periodic_logs_without_hiding_transitions() {
         let start = Instant::now();
-        let mut log = TelemetryLog::new(Duration::from_secs(1));
+        let mut log = TelemetryLog::new(Duration::from_secs(1), LogMode::Verbose);
         let mut telemetry = Telemetry {
             uptime_ms: 0,
             state: 1,
@@ -360,5 +464,30 @@ mod tests {
         telemetry.last_command_sequence = 2;
         assert!(log.should_display(&telemetry, start + Duration::from_millis(300)));
         assert!(log.should_display(&telemetry, start + Duration::from_millis(1_300)));
+    }
+
+    #[test]
+    fn compact_logs_only_meaningful_sensor_changes() {
+        let start = Instant::now();
+        let mut log = TelemetryLog::new(Duration::from_secs(1), LogMode::Compact);
+        let mut sensors = SensorStatus {
+            uptime_ms: 0,
+            pir_mask: 0,
+            proximity_mask: 0x08,
+            local_safety_mask: 0,
+            flags: 0,
+            ultrasonic_a_mm: 0,
+            ultrasonic_b_mm: 0,
+        };
+
+        assert!(log.should_display_sensors(&sensors, start));
+        sensors.flags |= 1 << 2;
+        sensors.ultrasonic_b_mm = 250;
+        assert!(!log.should_display_sensors(&sensors, start + Duration::from_secs(2)));
+
+        sensors.flags |= 1;
+        assert!(log.should_display_sensors(&sensors, start + Duration::from_secs(3)));
+        sensors.pir_mask = 1;
+        assert!(log.should_display_sensors(&sensors, start + Duration::from_secs(4)));
     }
 }

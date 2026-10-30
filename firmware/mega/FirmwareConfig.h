@@ -17,8 +17,8 @@ constexpr int16_t MAX_SIMULATED_SPEED_MM_S = 1000;
 
 // Initial Mega wiring for sensor bring-up. Change pins here if the physical
 // layout requires it; no sensor or control code should contain pin numbers.
-constexpr uint8_t PIR_FRONT_PIN = 22;
-constexpr uint8_t PIR_BACK_PIN = 23;
+constexpr uint8_t PIR_FRONT_PIN = 52;
+constexpr uint8_t PIR_BACK_PIN = 53;
 constexpr uint8_t BUMPER_1_PIN = 24;
 constexpr uint8_t BUMPER_2_PIN = 25;
 constexpr uint8_t BUMPER_3_PIN = 26;

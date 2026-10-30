@@ -101,8 +101,8 @@ The initial Mega pin assignment is centralized in `FirmwareConfig.h`:
 | Mega pin | Connection | Current role |
 | --- | --- | --- |
 | 6 | Scan servo signal | Rotate the two opposite ultrasonic sensors |
-| 22 | PIR front `OUT` | Human presence in front |
-| 23 | PIR back `OUT` | Human presence behind |
+| 52 | PIR front `OUT` | Human presence in front |
+| 53 | PIR back `OUT` | Human presence behind |
 | 24 | 10 cm sensor 1 `OUT` | Local bumper |
 | 25 | 10 cm sensor 2 `OUT` | Local bumper |
 | 26 | 10 cm sensor 3 `OUT` | Local bumper |
@@ -344,6 +344,7 @@ Available configuration:
 | --- | --- | --- |
 | `ARDUINO_FQBN` | `arduino:avr:mega` | Arduino board identifier |
 | `ARDUINO_PORT` | `/dev/ttyACM0` | Arduino serial port |
+| `ROBOT_LOG` | `compact` | Console output: `compact` for tests, `verbose` for every measurement |
 | `ARDUINO_BOOT_DELAY_MS` | `2000` | Silent delay after opening the port, before the handshake |
 | `FIRMWARE_DIR` | `firmware/mega` | Firmware sketch directory |
 | `CONTROLLER_DIR` | `controller` | Rust controller directory |

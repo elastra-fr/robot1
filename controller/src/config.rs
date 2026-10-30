@@ -8,6 +8,12 @@ const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(250);
 const DEFAULT_TELEMETRY_TIMEOUT: Duration = Duration::from_millis(1_500);
 const DEFAULT_TELEMETRY_LOG_INTERVAL: Duration = Duration::from_secs(1);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogMode {
+    Compact,
+    Verbose,
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub arduino_port: String,
@@ -16,6 +22,7 @@ pub struct Config {
     pub heartbeat_interval: Duration,
     pub telemetry_timeout: Duration,
     pub telemetry_log_interval: Duration,
+    pub log_mode: LogMode,
 }
 
 impl Config {
@@ -28,7 +35,27 @@ impl Config {
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
             telemetry_timeout: DEFAULT_TELEMETRY_TIMEOUT,
             telemetry_log_interval: DEFAULT_TELEMETRY_LOG_INTERVAL,
+            log_mode: log_mode_from_env()?,
         })
+    }
+}
+
+fn log_mode_from_env() -> io::Result<LogMode> {
+    let Ok(value) = std::env::var("ROBOT_LOG") else {
+        return Ok(LogMode::Compact);
+    };
+
+    parse_log_mode(&value)
+}
+
+fn parse_log_mode(value: &str) -> io::Result<LogMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "compact" => Ok(LogMode::Compact),
+        "verbose" => Ok(LogMode::Verbose),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid ROBOT_LOG value: {value} (expected compact or verbose)"),
+        )),
     }
 }
 
@@ -49,7 +76,7 @@ fn duration_from_env(name: &str, default: Duration) -> io::Result<Duration> {
 
 #[cfg(test)]
 mod tests {
-    use super::duration_from_env;
+    use super::{LogMode, duration_from_env, parse_log_mode};
     use std::time::Duration;
 
     #[test]
@@ -61,5 +88,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(duration, Duration::from_millis(42));
+    }
+
+    #[test]
+    fn parses_log_modes_case_insensitively() {
+        assert_eq!(parse_log_mode(" compact ").unwrap(), LogMode::Compact);
+        assert_eq!(parse_log_mode("VERBOSE").unwrap(), LogMode::Verbose);
+        assert!(parse_log_mode("debug").is_err());
     }
 }

@@ -26,7 +26,7 @@ impl ArduinoSession {
         heartbeat_interval: Duration,
         observer: &mut impl FnMut(&ArduinoEvent),
     ) -> io::Result<(Self, Telemetry)> {
-        println!("Opening Arduino serial port: {port_name}");
+        println!("[SERIAL] opening {port_name}");
         let link = SerialLink::open(&port_name, new_session(), boot_delay, serial_timeout)?;
         let mut session = Self {
             port_name,
@@ -48,7 +48,7 @@ impl ArduinoSession {
         let serial_timeout = self.serial_timeout;
         let heartbeat_interval = self.heartbeat_interval;
 
-        println!("Closing and reopening Arduino serial port: {port_name}");
+        println!("[SERIAL] reconnecting {port_name}");
         drop(self);
 
         Self::connect(
@@ -82,14 +82,11 @@ impl ArduinoSession {
     }
 
     fn handshake(&mut self) -> io::Result<()> {
-        println!(
-            "Synchronizing protocol session {:08x}...",
-            self.link.session()
-        );
+        println!("[SYNC] protocol session {:08x}", self.link.session());
 
         for attempt in 1..=HANDSHAKE_ATTEMPTS {
             let sequence = self.link.send(message_type::HELLO, &[])?;
-            println!("Pi -> HELLO seq={sequence} attempt={attempt}");
+            println!("[TX] HELLO seq={sequence} attempt={attempt}");
             let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
 
             while Instant::now() < deadline {
@@ -97,7 +94,7 @@ impl ArduinoSession {
                     && frame.message_type == message_type::HELLO_ACK
                     && frame.sequence == sequence
                 {
-                    println!("Arduino -> HELLO_ACK seq={sequence}");
+                    println!("[RX] HELLO_ACK seq={sequence}");
                     return Ok(());
                 }
             }
@@ -114,7 +111,7 @@ impl ArduinoSession {
         observer: &mut impl FnMut(&ArduinoEvent),
     ) -> io::Result<Telemetry> {
         let stop_sequence = self.link.send(message_type::STOP, &[])?;
-        println!("Pi -> STOP seq={stop_sequence} reason=session initialization");
+        println!("[TX] STOP seq={stop_sequence} reason=session-initialization");
 
         let deadline = Instant::now() + SAFE_STATE_TIMEOUT;
         let mut heartbeat_deadline = Instant::now() + self.heartbeat_interval;
@@ -145,7 +142,7 @@ impl ArduinoSession {
 
                 if stop_acknowledged && let Some(telemetry) = safe_telemetry {
                     println!(
-                        "Arduino safe state confirmed for session {:08x}",
+                        "[SAFE] Arduino stopped; session {:08x} ready",
                         self.link.session()
                     );
                     return Ok(telemetry);
