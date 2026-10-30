@@ -25,6 +25,7 @@ constexpr uint8_t BUMPER_3_PIN = 46;
 constexpr uint8_t CLIFF_SENSOR_PIN = 44;
 constexpr uint8_t ULTRASONIC_A_TRIGGER_PIN = 40;
 constexpr uint8_t ULTRASONIC_A_ECHO_PIN = 42;
+constexpr bool ULTRASONIC_B_ENABLED = false;
 constexpr uint8_t ULTRASONIC_B_TRIGGER_PIN = 30;
 constexpr uint8_t ULTRASONIC_B_ECHO_PIN = 31;
 constexpr uint8_t SCAN_SERVO_PIN = 6;

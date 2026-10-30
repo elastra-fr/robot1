@@ -156,11 +156,13 @@ void SensorManager::begin(unsigned long now) {
     ULTRASONIC_A_ECHO_PIN,
     now
   );
-  ultrasonicB_.begin(
-    ULTRASONIC_B_TRIGGER_PIN,
-    ULTRASONIC_B_ECHO_PIN,
-    now + ULTRASONIC_INTERVAL_MS / 2
-  );
+  if (ULTRASONIC_B_ENABLED) {
+    ultrasonicB_.begin(
+      ULTRASONIC_B_TRIGGER_PIN,
+      ULTRASONIC_B_ECHO_PIN,
+      now + ULTRASONIC_INTERVAL_MS / 2
+    );
+  }
 
   update(now);
 }
@@ -187,7 +189,7 @@ void SensorManager::update(unsigned long now) {
     if (!ultrasonicA_.busy()) {
       activeUltrasonic_ = -1;
     }
-  } else if (activeUltrasonic_ == 1) {
+  } else if (ULTRASONIC_B_ENABLED && activeUltrasonic_ == 1) {
     ultrasonicB_.update(now, nowUs);
     if (!ultrasonicB_.busy()) {
       activeUltrasonic_ = -1;
@@ -198,7 +200,7 @@ void SensorManager::update(unsigned long now) {
     if (ultrasonicA_.due(now)) {
       ultrasonicA_.start(nowUs);
       activeUltrasonic_ = 0;
-    } else if (ultrasonicB_.due(now)) {
+    } else if (ULTRASONIC_B_ENABLED && ultrasonicB_.due(now)) {
       ultrasonicB_.start(nowUs);
       activeUltrasonic_ = 1;
     }

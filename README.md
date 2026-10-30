@@ -108,7 +108,7 @@ The initial Mega pin assignment is centralized in `FirmwareConfig.h`:
 | 46 | 10 cm IR sensor 3 `OUT` | Local bumper |
 | 44 | Void sensor `OUT` | Ground/cliff detector |
 | 40 / 42 | Ultrasonic A `TRIG` / `ECHO` | Distance A |
-| 30 / 31 | Ultrasonic B `TRIG` / `ECHO` | Opposite distance B |
+| 30 / 31 | Ultrasonic B `TRIG` / `ECHO` | Disabled during the sensor A test |
 
 All sensor grounds must be connected to Mega ground. The selected Pololu/Sharp
 10 cm modules use an active-low output. Sensors 1 to 3 stop virtual motion when
@@ -130,6 +130,9 @@ presence is ignored during the first 60 seconds after boot while the modules
 stabilize, then each PIR transition must remain stable for 300 ms. Motor actions
 remain virtual and are displayed by the Pi as `MOVE FORWARD`, `MOVE BACKWARD`,
 `TURN LEFT`, `TURN RIGHT` or `STOPPED`.
+
+For the current distance test, `ULTRASONIC_B_ENABLED` is `false`: sensor B does
+not emit and the timing measurements therefore isolate sensor A.
 
 The active development behavior starts stopped. A new debounced front presence
 requests a one-second virtual left rotation; a back presence requests a

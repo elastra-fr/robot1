@@ -45,7 +45,8 @@ bool EnvironmentScanner::update(
   }
 
   const bool freshA = sensors.ultrasonicASequence() != baselineSequenceA_;
-  const bool freshB = sensors.ultrasonicBSequence() != baselineSequenceB_;
+  const bool freshB = !ULTRASONIC_B_ENABLED
+    || sensors.ultrasonicBSequence() != baselineSequenceB_;
   const bool timedOut = static_cast<long>(now - deadlineMs_) >= 0;
   if (!(freshA && freshB) && !timedOut) {
     return false;
@@ -56,7 +57,9 @@ bool EnvironmentScanner::update(
     ? sensors.ultrasonicAMm()
     : INVALID_DISTANCE_MM;
   sample.angleBDeg = (static_cast<uint16_t>(angleDeg_) + 180U) % 360U;
-  sample.distanceBMm = freshB && sensors.ultrasonicBValid()
+  sample.distanceBMm = ULTRASONIC_B_ENABLED
+    && freshB
+    && sensors.ultrasonicBValid()
     ? sensors.ultrasonicBMm()
     : INVALID_DISTANCE_MM;
   sample.validFlags = (sample.distanceAMm != INVALID_DISTANCE_MM ? 1U << 0 : 0)
