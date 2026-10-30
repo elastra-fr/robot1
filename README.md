@@ -107,7 +107,7 @@ The initial Mega pin assignment is centralized in `FirmwareConfig.h`:
 | 48 | 10 cm IR sensor 2 `OUT` | Local bumper |
 | 46 | 10 cm IR sensor 3 `OUT` | Local bumper |
 | 44 | Void sensor `OUT` | Ground/cliff detector |
-| 28 / 29 | Ultrasonic A `TRIG` / `ECHO` | Distance A |
+| 40 / 42 | Ultrasonic A `TRIG` / `ECHO` | Distance A |
 | 30 / 31 | Ultrasonic B `TRIG` / `ECHO` | Opposite distance B |
 
 All sensor grounds must be connected to Mega ground. The selected Pololu/Sharp
@@ -136,7 +136,8 @@ requests a one-second virtual left rotation; a back presence requests a
 one-second virtual right rotation. The Pi then sends `STOP`. A PIR held active
 does not retrigger the test: both PIR inputs must return to clear first. If both
 detect a presence simultaneously, the direction is ambiguous and the Pi keeps
-the robot stopped.
+the robot stopped. Sensor A is also displayed once per second on a dedicated,
+compact line such as `[DISTANCE] A=342mm`.
 
 The two ultrasonic sensors are mounted back-to-back on one servo. At startup,
 the Pi requests one environment scan. The Mega moves the servo from 0 to 180

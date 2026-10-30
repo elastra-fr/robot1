@@ -154,6 +154,7 @@ struct TelemetryLog {
     last_proximity_mask: Option<u8>,
     last_local_safety_mask: Option<u8>,
     last_sensor_flags: Option<u8>,
+    last_distance_display: Option<Instant>,
     scan_measurements: usize,
     scan_valid_measurements: usize,
     scan_nearest: Option<ScanNearest>,
@@ -179,6 +180,7 @@ impl TelemetryLog {
             last_proximity_mask: None,
             last_local_safety_mask: None,
             last_sensor_flags: None,
+            last_distance_display: None,
             scan_measurements: 0,
             scan_valid_measurements: 0,
             scan_nearest: None,
@@ -234,6 +236,12 @@ impl TelemetryLog {
                         ground,
                         safety,
                         self.ultrasonic_suffix(sensors),
+                    );
+                }
+                if self.should_display_distance(now) {
+                    println!(
+                        "[DISTANCE] A={}",
+                        distance_text(sensors.ultrasonic_a_mm, sensors.ultrasonic_a_valid())
                     );
                 }
             }
@@ -341,6 +349,18 @@ impl TelemetryLog {
         } else {
             String::new()
         }
+    }
+
+    fn should_display_distance(&mut self, now: Instant) -> bool {
+        if self
+            .last_distance_display
+            .is_some_and(|last| now.duration_since(last) < self.interval)
+        {
+            return false;
+        }
+
+        self.last_distance_display = Some(now);
+        true
     }
 
     fn reset_scan(&mut self) {
@@ -489,5 +509,15 @@ mod tests {
         assert!(log.should_display_sensors(&sensors, start + Duration::from_secs(3)));
         sensors.pir_mask = 1;
         assert!(log.should_display_sensors(&sensors, start + Duration::from_secs(4)));
+    }
+
+    #[test]
+    fn distance_is_displayed_once_per_interval() {
+        let start = Instant::now();
+        let mut log = TelemetryLog::new(Duration::from_secs(1), LogMode::Compact);
+
+        assert!(log.should_display_distance(start));
+        assert!(!log.should_display_distance(start + Duration::from_millis(999)));
+        assert!(log.should_display_distance(start + Duration::from_secs(1)));
     }
 }
