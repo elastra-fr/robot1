@@ -20,6 +20,7 @@ pub mod message_type {
     pub const MOTION_STATUS: u8 = 0x32;
     pub const ENVIRONMENT_SCAN_SAMPLE: u8 = 0x33;
     pub const ENVIRONMENT_SCAN_STATUS: u8 = 0x34;
+    pub const ULTRASONIC_DIAGNOSTIC: u8 = 0x35;
     pub const ERROR: u8 = 0x7f;
 }
 

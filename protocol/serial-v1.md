@@ -59,6 +59,7 @@ before activating the new session.
 | `0x32` | `MOTION_STATUS` | Arduino → Pi | Virtual motion and safety reason |
 | `0x33` | `ENVIRONMENT_SCAN_SAMPLE` | Arduino → Pi | Two opposite angular measurements |
 | `0x34` | `ENVIRONMENT_SCAN_STATUS` | Arduino → Pi | Scan lifecycle state |
+| `0x35` | `ULTRASONIC_DIAGNOSTIC` | Arduino → Pi | Raw ultrasonic A timing |
 | `0x7f` | `ERROR` | Arduino → Pi | One-byte error code |
 
 `SET_MOTION` is absolute and idempotent: a repeated frame sets the same target
@@ -105,6 +106,17 @@ while still forbidding movement.
 and otherwise limits the development display to about one line per second. PIR
 inputs have a 60-second startup stabilization period and a 300 ms debounce in
 the Mega firmware.
+
+## Ultrasonic diagnostic payload
+
+| Offset | Size | Type | Field |
+| --- | --- | --- | --- |
+| 0 | 2 | `u16` | Ultrasonic A distance in mm, or `0xffff` if invalid |
+| 2 | 4 | `u32` | Measured `ECHO` high duration in microseconds, or zero if invalid |
+| 6 | 1 | `u8` | Result: `0=not measured`, `1=valid`, `2=no ECHO rise`, `3=ECHO stayed high` |
+
+`ULTRASONIC_DIAGNOSTIC` is published with `SENSOR_STATUS`. It exposes the raw
+HC-SR04 pulse duration without changing the existing sensor-status payload.
 
 ## Motion status payload
 

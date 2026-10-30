@@ -9,13 +9,38 @@ pub enum ArduinoEvent {
     MotionStatus(MotionStatus),
     EnvironmentScanSample(EnvironmentScanSample),
     EnvironmentScanStatus(EnvironmentScanStatus),
+    UltrasonicDiagnostic(UltrasonicDiagnostic),
     InvalidTelemetry,
     InvalidSensorStatus,
     InvalidMotionStatus,
     InvalidEnvironmentScanSample,
     InvalidEnvironmentScanStatus,
+    InvalidUltrasonicDiagnostic,
     Error { sequence: u16, payload: Vec<u8> },
     Unexpected { message_type: u8 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UltrasonicDiagnostic {
+    pub distance_mm: u16,
+    pub echo_duration_us: u32,
+    pub result: u8,
+}
+
+impl UltrasonicDiagnostic {
+    pub fn valid(&self) -> bool {
+        self.result == 1
+    }
+
+    pub fn result_name(&self) -> &'static str {
+        match self.result {
+            0 => "not-measured",
+            1 => "valid",
+            2 => "no-echo-rise",
+            3 => "echo-stuck-high",
+            _ => "unknown",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,12 +151,27 @@ pub(super) fn decode_event(frame: Frame) -> ArduinoEvent {
         message_type::ENVIRONMENT_SCAN_STATUS => decode_environment_scan_status(&frame.payload)
             .map(ArduinoEvent::EnvironmentScanStatus)
             .unwrap_or(ArduinoEvent::InvalidEnvironmentScanStatus),
+        message_type::ULTRASONIC_DIAGNOSTIC => decode_ultrasonic_diagnostic(&frame.payload)
+            .map(ArduinoEvent::UltrasonicDiagnostic)
+            .unwrap_or(ArduinoEvent::InvalidUltrasonicDiagnostic),
         message_type::ERROR => ArduinoEvent::Error {
             sequence: frame.sequence,
             payload: frame.payload,
         },
         message_type => ArduinoEvent::Unexpected { message_type },
     }
+}
+
+fn decode_ultrasonic_diagnostic(payload: &[u8]) -> Option<UltrasonicDiagnostic> {
+    if payload.len() != 7 {
+        return None;
+    }
+
+    Some(UltrasonicDiagnostic {
+        distance_mm: u16::from_le_bytes(payload[0..2].try_into().ok()?),
+        echo_duration_us: u32::from_le_bytes(payload[2..6].try_into().ok()?),
+        result: payload[6],
+    })
 }
 
 fn decode_environment_scan_sample(payload: &[u8]) -> Option<EnvironmentScanSample> {
@@ -199,7 +239,7 @@ fn decode_telemetry(payload: &[u8]) -> Option<Telemetry> {
 mod tests {
     use super::{
         decode_environment_scan_sample, decode_motion_status, decode_sensor_status,
-        decode_telemetry,
+        decode_telemetry, decode_ultrasonic_diagnostic,
     };
 
     #[test]
@@ -264,5 +304,15 @@ mod tests {
         assert_eq!(sample.distance_b_mm, 700);
         assert!(sample.sensor_a_valid());
         assert!(sample.sensor_b_valid());
+    }
+
+    #[test]
+    fn decodes_ultrasonic_diagnostic() {
+        let diagnostic = decode_ultrasonic_diagnostic(&[0xbc, 0x02, 0xf2, 0x0f, 0, 0, 1]).unwrap();
+
+        assert_eq!(diagnostic.distance_mm, 700);
+        assert_eq!(diagnostic.echo_duration_us, 4_082);
+        assert!(diagnostic.valid());
+        assert_eq!(diagnostic.result_name(), "valid");
     }
 }

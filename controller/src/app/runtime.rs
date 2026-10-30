@@ -1,5 +1,5 @@
 use super::supervisor::ConnectionSupervisor;
-use crate::adapters::arduino::{ArduinoEvent, ArduinoSession, SensorStatus};
+use crate::adapters::arduino::{ArduinoEvent, ArduinoSession, SensorStatus, UltrasonicDiagnostic};
 use crate::behaviors::PresenceTestBehavior;
 use crate::config::{Config, LogMode};
 use crate::control::{Behavior, SafetyController};
@@ -7,8 +7,11 @@ use crate::domain::{
     ActuatorCommand, MotionIntent, Observation, RobotState, SensorSnapshot, Telemetry,
 };
 use crate::ports::MotionOutput;
+use std::collections::VecDeque;
 use std::io;
 use std::time::{Duration, Instant};
+
+const DISTANCE_DIAGNOSTIC_WINDOW: usize = 20;
 
 pub struct Runtime {
     config: Config,
@@ -155,6 +158,7 @@ struct TelemetryLog {
     last_local_safety_mask: Option<u8>,
     last_sensor_flags: Option<u8>,
     last_distance_display: Option<Instant>,
+    distance_samples: VecDeque<DistanceSample>,
     scan_measurements: usize,
     scan_valid_measurements: usize,
     scan_nearest: Option<ScanNearest>,
@@ -165,6 +169,21 @@ struct ScanNearest {
     sensor: char,
     angle_deg: u16,
     distance_mm: u16,
+}
+
+#[derive(Clone, Copy)]
+struct DistanceSample {
+    distance_mm: u16,
+    echo_duration_us: u32,
+    valid: bool,
+}
+
+struct DistanceStats {
+    valid_count: usize,
+    average_mm: u16,
+    average_echo_us: u32,
+    minimum_mm: u16,
+    maximum_mm: u16,
 }
 
 impl TelemetryLog {
@@ -181,6 +200,7 @@ impl TelemetryLog {
             last_local_safety_mask: None,
             last_sensor_flags: None,
             last_distance_display: None,
+            distance_samples: VecDeque::with_capacity(DISTANCE_DIAGNOSTIC_WINDOW),
             scan_measurements: 0,
             scan_valid_measurements: 0,
             scan_nearest: None,
@@ -238,11 +258,11 @@ impl TelemetryLog {
                         self.ultrasonic_suffix(sensors),
                     );
                 }
+            }
+            ArduinoEvent::UltrasonicDiagnostic(diagnostic) => {
+                self.record_distance(diagnostic);
                 if self.should_display_distance(now) {
-                    println!(
-                        "[DISTANCE] A={}",
-                        distance_text(sensors.ultrasonic_a_mm, sensors.ultrasonic_a_valid())
-                    );
+                    self.display_distance_diagnostic(diagnostic);
                 }
             }
             ArduinoEvent::MotionStatus(status) => {
@@ -286,6 +306,9 @@ impl TelemetryLog {
             }
             ArduinoEvent::InvalidEnvironmentScanStatus => {
                 eprintln!("[ERROR] invalid ENVIRONMENT_SCAN_STATUS payload");
+            }
+            ArduinoEvent::InvalidUltrasonicDiagnostic => {
+                eprintln!("[ERROR] invalid ULTRASONIC_DIAGNOSTIC payload");
             }
             ArduinoEvent::Error { sequence, payload } => {
                 eprintln!("[ERROR] Arduino seq={sequence} payload={payload:02x?}");
@@ -361,6 +384,73 @@ impl TelemetryLog {
 
         self.last_distance_display = Some(now);
         true
+    }
+
+    fn record_distance(&mut self, diagnostic: &UltrasonicDiagnostic) {
+        if self.distance_samples.len() == DISTANCE_DIAGNOSTIC_WINDOW {
+            self.distance_samples.pop_front();
+        }
+        self.distance_samples.push_back(DistanceSample {
+            distance_mm: diagnostic.distance_mm,
+            echo_duration_us: diagnostic.echo_duration_us,
+            valid: diagnostic.valid(),
+        });
+    }
+
+    fn distance_stats(&self) -> Option<DistanceStats> {
+        let mut valid_count = 0_usize;
+        let mut distance_sum = 0_u64;
+        let mut echo_sum = 0_u64;
+        let mut minimum_mm = u16::MAX;
+        let mut maximum_mm = u16::MIN;
+
+        for sample in self.distance_samples.iter().filter(|sample| sample.valid) {
+            valid_count += 1;
+            distance_sum += u64::from(sample.distance_mm);
+            echo_sum += u64::from(sample.echo_duration_us);
+            minimum_mm = minimum_mm.min(sample.distance_mm);
+            maximum_mm = maximum_mm.max(sample.distance_mm);
+        }
+
+        if valid_count == 0 {
+            return None;
+        }
+
+        let count = valid_count as u64;
+        Some(DistanceStats {
+            valid_count,
+            average_mm: ((distance_sum + count / 2) / count) as u16,
+            average_echo_us: ((echo_sum + count / 2) / count) as u32,
+            minimum_mm,
+            maximum_mm,
+        })
+    }
+
+    fn display_distance_diagnostic(&self, diagnostic: &UltrasonicDiagnostic) {
+        let total = self.distance_samples.len();
+        let last = if diagnostic.valid() {
+            format!(
+                "A={}mm echo={}us",
+                diagnostic.distance_mm, diagnostic.echo_duration_us
+            )
+        } else {
+            format!("A=invalid reason={}", diagnostic.result_name())
+        };
+
+        if let Some(stats) = self.distance_stats() {
+            println!(
+                "[DISTANCE] {last} | valid={}/{} avg={}mm/{}us min={} max={} spread={}mm",
+                stats.valid_count,
+                total,
+                stats.average_mm,
+                stats.average_echo_us,
+                stats.minimum_mm,
+                stats.maximum_mm,
+                stats.maximum_mm - stats.minimum_mm,
+            );
+        } else {
+            println!("[DISTANCE] {last} | valid=0/{total}");
+        }
     }
 
     fn reset_scan(&mut self) {
@@ -454,7 +544,7 @@ fn distance_text(distance_mm: u16, valid: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::TelemetryLog;
-    use crate::adapters::arduino::SensorStatus;
+    use crate::adapters::arduino::{SensorStatus, UltrasonicDiagnostic};
     use crate::config::LogMode;
     use crate::domain::Telemetry;
     use std::time::{Duration, Instant};
@@ -519,5 +609,32 @@ mod tests {
         assert!(log.should_display_distance(start));
         assert!(!log.should_display_distance(start + Duration::from_millis(999)));
         assert!(log.should_display_distance(start + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn computes_rolling_distance_diagnostics() {
+        let mut log = TelemetryLog::new(Duration::from_secs(1), LogMode::Compact);
+        log.record_distance(&UltrasonicDiagnostic {
+            distance_mm: 700,
+            echo_duration_us: 4_082,
+            result: 1,
+        });
+        log.record_distance(&UltrasonicDiagnostic {
+            distance_mm: 710,
+            echo_duration_us: 4_140,
+            result: 1,
+        });
+        log.record_distance(&UltrasonicDiagnostic {
+            distance_mm: u16::MAX,
+            echo_duration_us: 0,
+            result: 2,
+        });
+
+        let stats = log.distance_stats().unwrap();
+        assert_eq!(stats.valid_count, 2);
+        assert_eq!(stats.average_mm, 705);
+        assert_eq!(stats.average_echo_us, 4_111);
+        assert_eq!(stats.minimum_mm, 700);
+        assert_eq!(stats.maximum_mm, 710);
     }
 }

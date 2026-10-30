@@ -139,8 +139,11 @@ requests a one-second virtual left rotation; a back presence requests a
 one-second virtual right rotation. The Pi then sends `STOP`. A PIR held active
 does not retrigger the test: both PIR inputs must return to clear first. If both
 detect a presence simultaneously, the direction is ambiguous and the Pi keeps
-the robot stopped. Sensor A is also displayed once per second on a dedicated,
-compact line such as `[DISTANCE] A=342mm`.
+the robot stopped. Sensor A is also displayed once per second with its raw echo
+duration and rolling statistics, for example
+`[DISTANCE] A=700mm echo=4082us | valid=20/20 avg=701mm min=696 max=706 spread=10mm`.
+Invalid samples distinguish a missing rising edge (`reason=no-echo-rise`) from
+an `ECHO` signal that never returned low (`reason=echo-stuck-high`).
 
 The two ultrasonic sensors are mounted back-to-back on one servo. At startup,
 the Pi requests one environment scan. The Mega moves the servo from 0 to 180
@@ -181,6 +184,7 @@ Arduino -> MOTION_STATUS (on change)
 Pi      -> START_ENVIRONMENT_SCAN
 Arduino -> ENVIRONMENT_SCAN_SAMPLE
 Arduino -> ENVIRONMENT_SCAN_STATUS
+Arduino -> ULTRASONIC_DIAGNOSTIC
 Pi      -> HEARTBEAT (4 Hz)
 ```
 

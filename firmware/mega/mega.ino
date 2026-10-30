@@ -145,6 +145,11 @@ void loop() {
   if (communication.sessionActive()
       && now - lastSensorStatusMs >= SENSOR_STATUS_INTERVAL_MS) {
     communication.sendSensorStatus(sensors.snapshot(now));
+    communication.sendUltrasonicDiagnostic(
+      sensors.ultrasonicAMm(),
+      sensors.ultrasonicAEchoUs(),
+      sensors.ultrasonicAResultCode()
+    );
     lastSensorStatusMs = now;
   }
 }

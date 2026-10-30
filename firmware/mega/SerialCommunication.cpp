@@ -18,6 +18,7 @@ constexpr uint8_t MSG_SENSOR_STATUS = 0x31;
 constexpr uint8_t MSG_MOTION_STATUS = 0x32;
 constexpr uint8_t MSG_ENVIRONMENT_SCAN_SAMPLE = 0x33;
 constexpr uint8_t MSG_ENVIRONMENT_SCAN_STATUS = 0x34;
+constexpr uint8_t MSG_ULTRASONIC_DIAGNOSTIC = 0x35;
 constexpr uint8_t MSG_ERROR = 0x7f;
 
 uint16_t crc16(const uint8_t *bytes, size_t length) {
@@ -236,6 +237,23 @@ void SerialCommunication::sendSensorStatus(const SensorData &sensors) {
   writeU16(&payload[8], sensors.ultrasonicAMm);
   writeU16(&payload[10], sensors.ultrasonicBMm);
   sendFrame(MSG_SENSOR_STATUS, eventSequence_++, payload, sizeof(payload));
+}
+
+void SerialCommunication::sendUltrasonicDiagnostic(
+  uint16_t distanceMm,
+  uint32_t echoDurationUs,
+  uint8_t resultCode
+) {
+  uint8_t payload[7];
+  writeU16(&payload[0], distanceMm);
+  writeU32(&payload[2], echoDurationUs);
+  payload[6] = resultCode;
+  sendFrame(
+    MSG_ULTRASONIC_DIAGNOSTIC,
+    eventSequence_++,
+    payload,
+    sizeof(payload)
+  );
 }
 
 void SerialCommunication::sendMotionStatus(

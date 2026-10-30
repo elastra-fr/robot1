@@ -17,6 +17,11 @@ class SerialCommunication {
   void sendError(uint16_t sequence, uint8_t code);
   void sendTelemetry(const TelemetryData &telemetry);
   void sendSensorStatus(const SensorData &sensors);
+  void sendUltrasonicDiagnostic(
+    uint16_t distanceMm,
+    uint32_t echoDurationUs,
+    uint8_t resultCode
+  );
   void sendMotionStatus(MotionMode mode, SafetyReason reason);
   void sendEnvironmentScanSample(const EnvironmentScanSample &sample);
   void sendEnvironmentScanStatus(uint8_t status);

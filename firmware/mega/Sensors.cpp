@@ -83,15 +83,15 @@ void UltrasonicSensor::update(unsigned long nowMs, unsigned long nowUs) {
         echoStartedUs_ = nowUs;
         phase_ = Phase::WaitEchoFall;
       } else if (nowUs - phaseStartedUs_ >= ULTRASONIC_ECHO_TIMEOUT_US) {
-        finish(nowMs, false, 0);
+        finish(nowMs, UltrasonicResult::EchoRiseTimeout, 0);
       }
       return;
 
     case Phase::WaitEchoFall:
       if (digitalRead(echoPin_) == LOW) {
-        finish(nowMs, true, nowUs - echoStartedUs_);
+        finish(nowMs, UltrasonicResult::Valid, nowUs - echoStartedUs_);
       } else if (nowUs - echoStartedUs_ >= ULTRASONIC_ECHO_TIMEOUT_US) {
-        finish(nowMs, false, 0);
+        finish(nowMs, UltrasonicResult::EchoFallTimeout, 0);
       }
       return;
   }
@@ -123,19 +123,30 @@ uint16_t UltrasonicSensor::distanceMm() const {
   return distanceMm_;
 }
 
+uint32_t UltrasonicSensor::echoDurationUs() const {
+  return echoDurationUs_;
+}
+
+UltrasonicResult UltrasonicSensor::result() const {
+  return result_;
+}
+
 uint16_t UltrasonicSensor::measurementSequence() const {
   return measurementSequence_;
 }
 
 void UltrasonicSensor::finish(
   unsigned long nowMs,
-  bool valid,
+  UltrasonicResult result,
   unsigned long echoDurationUs
 ) {
+  const bool valid = result == UltrasonicResult::Valid;
   phase_ = Phase::Idle;
   nextMeasurementMs_ = nowMs + ULTRASONIC_INTERVAL_MS;
   ++measurementSequence_;
   valid_ = valid;
+  result_ = result;
+  echoDurationUs_ = valid ? echoDurationUs : 0;
   distanceMm_ = valid
     ? static_cast<uint16_t>((echoDurationUs * 343UL) / 2000UL)
     : INVALID_DISTANCE_MM;
@@ -260,6 +271,14 @@ uint16_t SensorManager::ultrasonicAMm() const {
 
 uint16_t SensorManager::ultrasonicBMm() const {
   return ultrasonicB_.distanceMm();
+}
+
+uint32_t SensorManager::ultrasonicAEchoUs() const {
+  return ultrasonicA_.echoDurationUs();
+}
+
+uint8_t SensorManager::ultrasonicAResultCode() const {
+  return static_cast<uint8_t>(ultrasonicA_.result());
 }
 
 bool SensorManager::ultrasonicAValid() const {
