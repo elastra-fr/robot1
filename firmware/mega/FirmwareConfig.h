@@ -19,10 +19,10 @@ constexpr int16_t MAX_SIMULATED_SPEED_MM_S = 1000;
 // layout requires it; no sensor or control code should contain pin numbers.
 constexpr uint8_t PIR_FRONT_PIN = 52;
 constexpr uint8_t PIR_BACK_PIN = 53;
-constexpr uint8_t BUMPER_1_PIN = 24;
-constexpr uint8_t BUMPER_2_PIN = 25;
-constexpr uint8_t BUMPER_3_PIN = 26;
-constexpr uint8_t CLIFF_SENSOR_PIN = 27;
+constexpr uint8_t BUMPER_1_PIN = 50;
+constexpr uint8_t BUMPER_2_PIN = 48;
+constexpr uint8_t BUMPER_3_PIN = 46;
+constexpr uint8_t CLIFF_SENSOR_PIN = 44;
 constexpr uint8_t ULTRASONIC_A_TRIGGER_PIN = 28;
 constexpr uint8_t ULTRASONIC_A_ECHO_PIN = 29;
 constexpr uint8_t ULTRASONIC_B_TRIGGER_PIN = 30;

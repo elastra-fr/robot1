@@ -103,10 +103,10 @@ The initial Mega pin assignment is centralized in `FirmwareConfig.h`:
 | 6 | Scan servo signal | Rotate the two opposite ultrasonic sensors |
 | 52 | PIR front `OUT` | Human presence in front |
 | 53 | PIR back `OUT` | Human presence behind |
-| 24 | 10 cm sensor 1 `OUT` | Local bumper |
-| 25 | 10 cm sensor 2 `OUT` | Local bumper |
-| 26 | 10 cm sensor 3 `OUT` | Local bumper |
-| 27 | 10 cm sensor 4 `OUT` | Ground/cliff detector |
+| 50 | 10 cm IR sensor 1 `OUT` | Local bumper |
+| 48 | 10 cm IR sensor 2 `OUT` | Local bumper |
+| 46 | 10 cm IR sensor 3 `OUT` | Local bumper |
+| 44 | Void sensor `OUT` | Ground/cliff detector |
 | 28 / 29 | Ultrasonic A `TRIG` / `ECHO` | Distance A |
 | 30 / 31 | Ultrasonic B `TRIG` / `ECHO` | Opposite distance B |
 
